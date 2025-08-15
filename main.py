@@ -110,7 +110,9 @@ class App:
         header_label = ttk.Label(padded_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 10), padx=10)
         
-        tab_frame = ttk.Frame(padded_frame, style='TFrame', background=self.style.lookup('TFrame', 'background'))
+        # --- Custom Tab Buttons ---
+        # FIX: Removed the incorrect 'background' argument from this ttk.Frame
+        tab_frame = ttk.Frame(padded_frame, style='TFrame')
         tab_frame.pack(fill=tk.X, padx=10)
 
         self.device_tab_button = ttk.Button(tab_frame, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
@@ -118,6 +120,7 @@ class App:
         self.api_tab_button = ttk.Button(tab_frame, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
         self.api_tab_button.pack(side=tk.LEFT)
 
+        # --- Content Frames ---
         self.content_frame = tk.Canvas(padded_frame, bg='#FFFFFF', highlightthickness=0)
         self.content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
         self.content_frame.bind("<Configure>", self.draw_rounded_card)
@@ -125,6 +128,7 @@ class App:
         self.device_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
         self.api_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
         
+        # --- Tab 1: Device Status Content ---
         buttons_frame = ttk.Frame(self.device_frame, padding=(0, 20, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
@@ -145,6 +149,7 @@ class App:
         self.device_tree.tag_configure('connected', foreground="#20C997", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
         
+        # --- Tab 2: API Log Content ---
         api_status_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
         api_status_frame.pack(fill=tk.X)
         self.api_status_dot = tk.Canvas(api_status_frame, width=10, height=10, bg='red', highlightthickness=0)
