@@ -28,7 +28,7 @@ class App:
         master.geometry("750x550")
         master.configure(background='#F0F2F5')
         
-        # --- FIX 1: Make the window non-resizable ---
+        # --- Make the window non-resizable ---
         master.resizable(False, False)
 
         # --- Style Configuration ---
@@ -75,42 +75,62 @@ class App:
         self.update_tray_status() # Set initial tray status
 
     def create_widgets(self):
-        # ... (UI creation is the same)
+        # Main container with padding to create the floating card effect
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
         padded_frame.pack(fill=tk.BOTH, expand=True)
+
+        # The main white card
         main_frame = ttk.Frame(padded_frame, style='TFrame', padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- Header ---
         header_label = ttk.Label(main_frame, text="System Monitor", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 20))
+
+        # --- Tabs ---
         tabs_frame = ttk.Frame(main_frame)
         tabs_frame.pack(fill=tk.X)
+        
         device_status_tab = ttk.Button(tabs_frame, text="Device Status", style='ActiveTab.TButton', state='disabled')
         device_status_tab.pack(side=tk.LEFT)
+        
         api_connection_tab = ttk.Button(tabs_frame, text="API Connection", style='Tab.TButton', state='disabled')
         api_connection_tab.pack(side=tk.LEFT)
+        
         underline = tk.Frame(main_frame, height=2, bg='#0D6EFD')
         underline.pack(fill=tk.X, anchor='n')
-        tree_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
-        tree_frame.pack(fill=tk.BOTH, expand=True)
-        self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
-        self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
-        self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=300)
-        self.device_tree.column('status', anchor='w', width=150)
-        self.device_tree.pack(fill=tk.BOTH, expand=True)
-        self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
-        self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
+
+        # --- FIX: Pack buttons at the bottom FIRST ---
         buttons_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
-        buttons_frame.pack(fill=tk.X)
+        buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
         self.refresh_button.pack(side=tk.LEFT, padx=(0, 10))
+
         self.connect_button = ttk.Button(buttons_frame, text="Connect Selected", command=self.connect_device, style='Primary.TButton')
         self.connect_button.pack(side=tk.LEFT, padx=(0, 10))
+
         self.disconnect_button = ttk.Button(buttons_frame, text="Disconnect", command=self.disconnect_device, style='Secondary.TButton')
         self.disconnect_button.pack(side=tk.LEFT)
         self.disconnect_button.config(state='disabled')
 
-    # --- FIX 2: System Tray Helper Methods ---
+        # --- FIX: Pack device list LAST to fill remaining space ---
+        tree_frame = ttk.Frame(main_frame, padding=(0, 10, 0, 0)) # Reduced bottom padding
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
+        
+        self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
+        self.device_tree.heading('status', text='STATUS', anchor='w')
+
+        self.device_tree.column('device_id', anchor='w', width=300)
+        self.device_tree.column('status', anchor='w', width=150)
+
+        self.device_tree.pack(fill=tk.BOTH, expand=True)
+        self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
+        self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
+
+    # --- System Tray Helper Methods ---
     def hide_window(self):
         """Hides the main window."""
         self.master.withdraw()
