@@ -1,17 +1,16 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
 import subprocess
 import threading
 import os
 import sys
 import time
 import queue
-from PIL import Image, ImageDraw, ImageTk
-import pystray
+# GUI imports will be moved into the main block to support headless building
 
 # --- System Tray Icon Creation ---
 def create_android_icon(color):
     """Generates a simple Android robot icon."""
+    # This function requires Pillow, which will be imported later.
+    from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     
@@ -30,6 +29,11 @@ def create_android_icon(color):
 
 class App:
     def __init__(self, master):
+        # Import GUI libraries here, inside the class context
+        import tkinter as tk
+        from tkinter import ttk, messagebox, scrolledtext
+        from PIL import ImageTk
+
         self.master = master
         self.tray_icon = None 
         self.is_running = True
@@ -103,6 +107,9 @@ class App:
         self.start_api_exe()
 
     def create_widgets(self):
+        import tkinter as tk
+        from tkinter import ttk, scrolledtext
+
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
         padded_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -192,6 +199,7 @@ class App:
 
     def process_api_log_queue(self):
         """Checks the queue and updates the text widget in the main thread."""
+        import tkinter as tk # Need tk for END constant
         try:
             while True:
                 line = self.api_log_queue.get_nowait()
@@ -205,6 +213,7 @@ class App:
 
     def log_to_api_tab(self, message):
         """Appends a message to the API log text widget."""
+        import tkinter as tk # Need tk for END constant
         self.api_log_text.config(state='normal')
         self.api_log_text.insert(tk.END, message)
         self.api_log_text.see(tk.END) # Auto-scroll
@@ -232,6 +241,7 @@ class App:
     # --- Background Monitoring ---
     def device_monitor_loop(self):
         """Periodically checks for device connection changes."""
+        from tkinter import messagebox
         while self.is_running:
             if self.connected_device and not self.is_disconnecting:
                 try:
@@ -245,6 +255,7 @@ class App:
 
     def handle_auto_disconnect(self):
         """Handles UI updates when a device is physically disconnected."""
+        from tkinter import messagebox
         if self.connected_device:
             messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
         self.connected_device = None
@@ -255,6 +266,8 @@ class App:
 
     # --- Original Logic ---
     def _refresh_devices(self):
+        import tkinter as tk
+        from tkinter import messagebox
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
         try:
@@ -279,6 +292,7 @@ class App:
             self.refresh_button.config(state='normal')
 
     def _connect_device(self, device_id):
+        from tkinter import messagebox
         try:
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -297,6 +311,7 @@ class App:
             self.connect_button.config(state='normal')
 
     def _disconnect_device(self):
+        from tkinter import messagebox
         if not self.connected_device: return
         try:
             result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
@@ -330,6 +345,7 @@ class App:
             return False
 
     def start_adb_server(self):
+        from tkinter import messagebox
         try:
             subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
@@ -351,6 +367,7 @@ class App:
         return devices
 
     def connect_device(self):
+        from tkinter import messagebox
         selected_item = self.device_tree.focus()
         if not selected_item:
             messagebox.showwarning("Select Device", "Please select a device to connect.")
@@ -364,6 +381,7 @@ class App:
         threading.Thread(target=self._connect_device, args=(selected_device,)).start()
 
     def disconnect_device(self):
+        from tkinter import messagebox
         if not self.connected_device:
             messagebox.showwarning("No Connection", "No device is currently connected.")
             return
@@ -390,6 +408,12 @@ class App:
 
 
 if __name__ == "__main__":
+    # --- Main execution block ---
+    # Import GUI libraries here to prevent errors in headless environments
+    import tkinter as tk
+    from PIL import Image
+    import pystray
+
     root = tk.Tk()
     app = App(root)
 
