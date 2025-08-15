@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import queue
+# GUI imports are moved into the main block to support headless building
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -11,11 +12,15 @@ def create_android_icon(color):
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
+    # Head
     draw.arc((12, 10, 52, 50), 180, 0, fill=color, width=8)
+    # Eyes
     draw.ellipse((22, 24, 28, 30), fill='white')
     draw.ellipse((36, 24, 42, 30), fill='white')
+    # Antennae
     draw.line((20, 12, 16, 6), fill=color, width=3)
     draw.line((44, 12, 48, 6), fill=color, width=3)
+    # Body
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
@@ -26,185 +31,232 @@ class App:
         from PIL import ImageTk
 
         self.master = master
-        self.tray_icon = None 
+        self.tray_icon = None
         self.is_running = True
         self.is_disconnecting = False
-        self.api_process = None 
+        self.api_process = None
         self.last_search_term = ""
         self.last_search_pos = "1.0"
         self.api_status = "Offline"
-        
-        # Define color constants as instance variables
-        self.BG_COLOR = "#D1D9E6"  # Light purple background
-        self.CARD_BG = "#FFFFFF"   # White card background
-        self.ACCENT_COLOR = "#F4A261"  # Orange accent
-        self.TEXT_COLOR = "#4A4A4A"  # Dark gray text
-        self.SUCCESS_COLOR = "#2ECC71"  # Green for success
-        self.ERROR_COLOR = "#E74C3C"  # Red for error
-        self.SHADOW_COLOR = "#B0B7C4"  # Subtle gray shadow
-        
+
         master.title("HHT Android Connect")
-        
+
+        # --- Window Centering and Sizing ---
         app_width = 800
         app_height = 600
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
-        x_pos = (screen_width - app_width) // 2
-        y_pos = (screen_height - app_height) // 2
+        x_pos = (screen_width // 2) - (app_width // 2)
+        y_pos = (screen_height // 2) - (app_height // 2)
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
+        master.minsize(750, 550)
 
-        master.configure(background=self.BG_COLOR)
-        
-        self.icon_image = create_android_icon(self.ACCENT_COLOR)
+        # --- Neumorphic Color Palette ---
+        self.COLOR_BG = "#E0E5EC"
+        self.COLOR_SHADOW_LIGHT = "#FFFFFF"
+        self.COLOR_SHADOW_DARK = "#A3B1C6"
+        self.COLOR_TEXT = "#5A6677"
+        self.COLOR_ACCENT = "#FF6B6B" # A vibrant coral/red
+        self.COLOR_SUCCESS = "#2EC574"
+        self.COLOR_DANGER = "#FF4757"
+
+        master.configure(background=self.COLOR_BG)
+
+        self.icon_image = create_android_icon(self.COLOR_TEXT)
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
-        
-        master.resizable(False, False)
 
+        # --- Style Configuration for TTK Widgets ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        
-        self.style.configure('.', background=self.CARD_BG, foreground=self.TEXT_COLOR, font=('Arial', 10))
-        self.style.configure('TFrame', background=self.CARD_BG)
-        self.style.configure('TLabel', background=self.CARD_BG, foreground=self.TEXT_COLOR)
-        self.style.configure('Header.TLabel', font=('Arial', 18, 'bold'), foreground=self.TEXT_COLOR)
-        
-        self.style.configure('Accent.TButton', font=('Arial', 10, 'bold'), background=self.ACCENT_COLOR, foreground='white', padding=8)
-        self.style.map('Accent.TButton', background=[('active', '#F5B98A')])
-        self.style.configure('Secondary.TButton', font=('Arial', 10), background=self.CARD_BG, foreground=self.ACCENT_COLOR, padding=8)
-        self.style.map('Secondary.TButton', foreground=[('active', '#F4A261')])
-        
-        self.style.configure("Treeview.Heading", font=('Arial', 10, 'bold'), background=self.CARD_BG, foreground=self.TEXT_COLOR)
-        self.style.configure("Treeview", rowheight=40, font=('Arial', 10), fieldbackground=self.CARD_BG)
-        self.style.map("Treeview", background=[('selected', '#F5E8D7')], foreground=[('selected', self.TEXT_COLOR)])
-        
+
+        self.style.configure('.', font=('Segoe UI', 10), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
+        self.style.configure('TFrame', background=self.COLOR_BG)
+        self.style.configure('Treeview',
+                             background=self.COLOR_BG,
+                             fieldbackground=self.COLOR_BG,
+                             foreground=self.COLOR_TEXT,
+                             rowheight=35,
+                             font=('Consolas', 11))
+        self.style.map('Treeview', background=[('selected', self.COLOR_SHADOW_DARK)], foreground=[('selected', self.COLOR_SHADOW_LIGHT)])
+        self.style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'), background=self.COLOR_BG, relief='flat')
+        self.style.map('Treeview.Heading', background=[('active', self.COLOR_BG)])
+        self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
+
+        # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
-            messagebox.showerror("Error", "ADB not found.", parent=master)
+            messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
             master.quit()
             return
         self.start_adb_server()
         self.connected_device = None
 
+        # --- UI Creation ---
         self.create_widgets()
         self.refresh_devices()
         self.update_tray_status()
-        
+
+        # --- Start Background Tasks ---
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
-        
+
         self.start_api_exe()
 
     def create_widgets(self):
         import tkinter as tk
         from tkinter import ttk, scrolledtext
 
-        # Main container with padding
-        main_frame = tk.Frame(self.master, bg=self.BG_COLOR, padx=20, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # --- Main Layout ---
+        self.master.grid_rowconfigure(2, weight=1)
+        self.master.grid_columnconfigure(0, weight=1)
 
-        # Header
-        header_frame = tk.Frame(main_frame, bg=self.BG_COLOR)
-        header_frame.pack(fill=tk.X, pady=(0, 15))
-        header_label = ttk.Label(header_frame, text="HHT Android Connect", style='Header.TLabel')
-        header_label.pack()
+        header_frame = tk.Frame(self.master, bg=self.COLOR_BG)
+        header_frame.grid(row=0, column=0, sticky='ew', padx=30, pady=(20, 10))
 
-        # Tab buttons
-        tab_frame = tk.Frame(main_frame, bg=self.BG_COLOR)
-        tab_frame.pack(fill=tk.X, pady=(0, 15))
-        self.device_tab_btn = ttk.Button(tab_frame, text="Device Status", command=lambda: self.switch_tab('device'), style='Secondary.TButton')
-        self.device_tab_btn.pack(side=tk.LEFT, padx=5)
-        self.api_tab_btn = ttk.Button(tab_frame, text="API Log", command=lambda: self.switch_tab('api'), style='Secondary.TButton')
-        self.api_tab_btn.pack(side=tk.LEFT, padx=5)
+        header_label = tk.Label(header_frame, text="HHT Android Connect", font=('Segoe UI', 20, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        header_label.pack(side='left')
 
-        # Canvas for card layout
-        self.card_canvas = tk.Canvas(main_frame, bg=self.BG_COLOR, highlightthickness=0)
-        self.card_canvas.pack(fill=tk.BOTH, expand=True)
+        # --- Tab Navigation using tk.Button for better styling ---
+        tab_container = tk.Frame(self.master, bg=self.COLOR_BG)
+        tab_container.grid(row=1, column=0, sticky='ew', padx=30)
 
-        # Device Frame
-        self.device_frame = tk.Frame(self.card_canvas, bg=self.BG_COLOR)
-        self.api_frame = tk.Frame(self.card_canvas, bg=self.BG_COLOR)
+        self.device_tab_btn = tk.Button(tab_container, text="Device Status", font=('Segoe UI', 10, 'bold'),
+                                        bg=self.COLOR_BG, fg=self.COLOR_TEXT, activebackground=self.COLOR_BG,
+                                        activeforeground=self.COLOR_ACCENT, relief='flat', bd=0,
+                                        command=lambda: self.switch_tab('device'))
+        self.device_tab_btn.pack(side='left', padx=(0, 15))
 
-        # Device Card
-        device_card = self.create_card(self.device_frame, 10, 10, 760, 500)
-        buttons_frame = tk.Frame(device_card, bg=self.CARD_BG, padx=15, pady=15)
-        buttons_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
-        self.refresh_button.pack(side=tk.LEFT, padx=5)
-        self.connect_button = ttk.Button(buttons_frame, text="Connect Selected", command=self.connect_device, style='Accent.TButton')
-        self.connect_button.pack(side=tk.LEFT, padx=5)
-        self.disconnect_button = ttk.Button(buttons_frame, text="Disconnect", command=self.disconnect_device, style='Secondary.TButton')
-        self.disconnect_button.pack(side=tk.LEFT, padx=5)
+        self.api_tab_btn = tk.Button(tab_container, text="API Log", font=('Segoe UI', 10, 'bold'),
+                                     bg=self.COLOR_BG, fg=self.COLOR_TEXT, activebackground=self.COLOR_BG,
+                                     activeforeground=self.COLOR_ACCENT, relief='flat', bd=0,
+                                     command=lambda: self.switch_tab('api'))
+        self.api_tab_btn.pack(side='left')
+
+        # --- Neumorphic Card Effect ---
+        shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
+        shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(32, 28), pady=(2, 28))
+        shadow_light = tk.Frame(shadow_dark, bg=self.COLOR_SHADOW_LIGHT)
+        shadow_light.pack(fill='both', expand=True, padx=(2, 0), pady=(2, 0))
+        self.content_frame = tk.Frame(shadow_light, bg=self.COLOR_BG, padx=25, pady=25)
+        self.content_frame.pack(fill='both', expand=True, padx=(0, 2), pady=(0, 2))
+
+        self.content_frame.grid_rowconfigure(0, weight=1)
+        self.content_frame.grid_columnconfigure(0, weight=1)
+
+        # --- Device & API Frames ---
+        self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.device_frame.grid(row=0, column=0, sticky='nsew')
+        self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.api_frame.grid(row=0, column=0, sticky='nsew')
+
+        # --- Widgets for Device Frame ---
+        self.device_frame.grid_rowconfigure(0, weight=1)
+        self.device_frame.grid_columnconfigure(0, weight=1)
+
+        self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
+        self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
+        self.device_tree.heading('status', text='STATUS', anchor='w')
+        self.device_tree.column('device_id', anchor='w', width=350)
+        self.device_tree.column('status', anchor='center', width=120)
+        self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 20))
+        self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 10, 'bold'))
+        self.device_tree.tag_configure('disconnected', foreground=self.COLOR_TEXT)
+
+        buttons_frame = tk.Frame(self.device_frame, bg=self.COLOR_BG)
+        buttons_frame.grid(row=1, column=0, sticky='ew')
+
+        self.refresh_button = self.create_neumorphic_button(buttons_frame, text="Refresh", command=self.refresh_devices)
+        self.refresh_button.pack(side='left', padx=(0, 10))
+        self.disconnect_button = self.create_neumorphic_button(buttons_frame, text="Disconnect", command=self.disconnect_device)
+        self.disconnect_button.pack(side='left')
         self.disconnect_button.config(state='disabled')
-        tree_frame = tk.Frame(device_card, bg=self.CARD_BG, padx=15, pady=15)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
-        self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
-        self.device_tree.heading('device_id', text='Device ID')
-        self.device_tree.heading('status', text='Status')
-        self.device_tree.column('device_id', width=450)
-        self.device_tree.column('status', width=150)
-        self.device_tree.pack(fill=tk.BOTH, expand=True)
-        self.device_tree.tag_configure('connected', foreground=self.SUCCESS_COLOR)
-        self.device_tree.tag_configure('disconnected', foreground=self.ERROR_COLOR)
+        self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect Selected", command=self.connect_device, is_accent=True)
+        self.connect_button.pack(side='right')
 
-        # API Card
-        api_card = self.create_card(self.api_frame, 10, 10, 760, 500)
-        status_frame = tk.Frame(api_card, bg=self.CARD_BG, padx=15, pady=15)
-        status_frame.pack(fill=tk.X)
-        self.api_status_dot = tk.Canvas(status_frame, width=10, height=10, bg=self.ERROR_COLOR, highlightthickness=0)
-        self.api_status_dot.pack(side=tk.LEFT, padx=5)
-        self.api_status_label = ttk.Label(status_frame, text="API Status: Offline", foreground=self.ERROR_COLOR)
-        self.api_status_label.pack(side=tk.LEFT)
-        self.refresh_api_button = ttk.Button(status_frame, text="Refresh API", command=self.refresh_api_exe, style='Secondary.TButton')
-        self.refresh_api_button.pack(side=tk.RIGHT)
-        search_frame = tk.Frame(api_card, bg=self.CARD_BG, padx=15, pady=15)
-        search_frame.pack(fill=tk.X)
-        self.search_entry = ttk.Entry(search_frame)
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        search_button = ttk.Button(search_frame, text="Search", command=self.search_api_logs, style='Secondary.TButton')
-        search_button.pack(side=tk.LEFT)
-        self.api_log_text = scrolledtext.ScrolledText(api_card, wrap=tk.WORD, state='disabled', bg='#F5F5F5', fg=self.TEXT_COLOR)
-        self.api_log_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
-        self.api_log_text.tag_config('search', background='#F4A261', foreground=self.TEXT_COLOR)
-        self.api_log_text.tag_config('current_search', background='#F5B98A', foreground=self.TEXT_COLOR)
+        # --- Widgets for API Frame ---
+        self.api_frame.grid_rowconfigure(1, weight=1)
+        self.api_frame.grid_columnconfigure(0, weight=1)
+
+        api_header_frame = tk.Frame(self.api_frame, bg=self.COLOR_BG)
+        api_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 15))
+        api_header_frame.grid_columnconfigure(1, weight=1)
+
+        self.api_status_dot = tk.Canvas(api_header_frame, width=12, height=12, bg=self.COLOR_BG, highlightthickness=0)
+        self.api_status_dot.grid(row=0, column=0, sticky='w', pady=4)
+        self.api_status_label = tk.Label(api_header_frame, text="API Status:", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.api_status_label.grid(row=0, column=1, sticky='w', padx=5)
+
+        search_button = self.create_neumorphic_button(api_header_frame, text="Search", command=self.search_api_logs)
+        search_button.grid(row=0, column=3, sticky='e', padx=(0,10))
+        self.search_entry = self.create_neumorphic_entry(api_header_frame)
+        self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
+
+        self.refresh_api_button = self.create_neumorphic_button(api_header_frame, text="Restart API", command=self.refresh_api_exe)
+        self.refresh_api_button.grid(row=0, column=4, sticky='e')
+
+        log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
+        log_frame.grid(row=1, column=0, sticky='nsew')
+        self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 10), relief='flat', bd=2, highlightthickness=0)
+        self.api_log_text.pack(fill='both', expand=True, padx=2, pady=2)
+        self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
+        self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
 
         self.switch_tab('device')
 
-    def create_card(self, parent, x, y, width, height):
-        card = tk.Canvas(parent, bg=self.CARD_BG, highlightthickness=0, width=width, height=height)
-        card.pack(pady=10)
-        card.create_oval(x, y, x+20, y+20, fill=self.SHADOW_COLOR, outline="")
-        card.create_oval(x+width-20, y, x+width, y+20, fill=self.SHADOW_COLOR, outline="")
-        card.create_oval(x, y+height-20, x+20, y+height, fill=self.SHADOW_COLOR, outline="")
-        card.create_oval(x+width-20, y+height-20, x+width, y+height, fill=self.SHADOW_COLOR, outline="")
-        card.create_rectangle(x+10, y, x+width-10, y+height, fill=self.SHADOW_COLOR, outline="")
-        card.create_rectangle(x, y+10, x+width, y+height-10, fill=self.SHADOW_COLOR, outline="")
-        card.create_oval(x+2, y+2, x+22, y+22, fill=self.CARD_BG, outline="")
-        card.create_oval(x+width-22, y+2, x+width-2, y+22, fill=self.CARD_BG, outline="")
-        card.create_oval(x+2, y+height-22, x+22, y+height-2, fill=self.CARD_BG, outline="")
-        card.create_oval(x+width-22, y+height-22, x+width-2, y+height-2, fill=self.CARD_BG, outline="")
-        card.create_rectangle(x+12, y+2, x+width-12, y+height-2, fill=self.CARD_BG, outline="")
-        card.create_rectangle(x+2, y+12, x+width-2, y+height-12, fill=self.CARD_BG, outline="")
-        return card
+    def create_neumorphic_button(self, parent, text, command, is_accent=False):
+        import tkinter as tk
+        fg_color = 'white' if is_accent else self.COLOR_TEXT
+        bg_color = self.COLOR_ACCENT if is_accent else self.COLOR_BG
+
+        button = tk.Button(parent, text=text, command=command,
+                           font=('Segoe UI', 10, 'bold'),
+                           bg=bg_color, fg=fg_color,
+                           activebackground=self.COLOR_SHADOW_DARK if not is_accent else self.COLOR_ACCENT,
+                           activeforeground=self.COLOR_SHADOW_LIGHT if not is_accent else 'white',
+                           relief='flat', bd=0,
+                           highlightthickness=1,
+                           highlightbackground=self.COLOR_SHADOW_DARK,
+                           padx=15, pady=8)
+        return button
+
+    def create_neumorphic_entry(self, parent):
+        import tkinter as tk
+        from tkinter import ttk # <-- THE FIX IS HERE
+        entry_frame = tk.Frame(parent, bg=self.COLOR_SHADOW_DARK, padx=2, pady=2)
+        entry = ttk.Entry(entry_frame, font=('Segoe UI', 10), style='TEntry')
+        entry.pack()
+        return entry_frame
 
     def switch_tab(self, tab_name):
-        self.device_frame.place_forget()
-        self.api_frame.place_forget()
-        self.device_tab_btn.configure(style='Secondary.TButton')
-        self.api_tab_btn.configure(style='Secondary.TButton')
+        # Reset tab styles
+        self.device_tab_btn.config(fg=self.COLOR_TEXT)
+        self.api_tab_btn.config(fg=self.COLOR_TEXT)
 
         if tab_name == 'device':
-            self.device_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.device_tab_btn.configure(style='Accent.TButton')
+            self.api_frame.grid_remove()
+            self.device_frame.grid()
+            self.device_tab_btn.config(fg=self.COLOR_ACCENT)
         else:
-            self.api_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.api_tab_btn.configure(style='Accent.TButton')
+            self.device_frame.grid_remove()
+            self.api_frame.grid()
+            self.api_tab_btn.config(fg=self.COLOR_ACCENT)
+
+    def set_api_status(self, status):
+        self.api_status = status
+        if status == "Online":
+            self.api_status_dot.config(bg=self.COLOR_SUCCESS)
+            self.api_status_label.config(text="API Status: Online", fg=self.COLOR_SUCCESS)
+        else:
+            self.api_status_dot.config(bg=self.COLOR_DANGER)
+            self.api_status_label.config(text="API Status: Offline", fg=self.COLOR_DANGER)
+        self.update_tray_status()
 
     def search_api_logs(self):
         import tkinter as tk
-        search_term = self.search_entry.get()
+        search_term = self.search_entry.winfo_children()[0].get() # Get from inner entry
         self.api_log_text.config(state='normal')
-        
+
         if search_term != self.last_search_term:
             self.last_search_term = search_term
             self.last_search_pos = "1.0"
@@ -213,7 +265,7 @@ class App:
 
         if search_term:
             start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
-            
+
             if not start_pos:
                 self.last_search_pos = "1.0"
                 self.api_log_text.tag_remove('current_search', '1.0', tk.END)
@@ -226,13 +278,13 @@ class App:
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
-        
+
         self.api_log_text.config(state='disabled')
 
     def start_api_exe(self):
         self.api_log_queue = queue.Queue()
         api_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "api.exe")
-        
+
         if not os.path.exists(api_path):
             self.log_to_api_tab("Error: api.exe not found in the application directory.")
             self.set_api_status("Offline")
@@ -283,16 +335,6 @@ class App:
         if "fiber" in message.lower() and self.api_status != "Online":
             self.set_api_status("Online")
 
-    def set_api_status(self, status):
-        self.api_status = status
-        if status == "Online":
-            self.api_status_dot.config(bg=self.SUCCESS_COLOR)
-            self.api_status_label.config(text="API Status: Online", foreground=self.SUCCESS_COLOR)
-        else:
-            self.api_status_dot.config(bg=self.ERROR_COLOR)
-            self.api_status_label.config(text="API Status: Offline", foreground=self.ERROR_COLOR)
-        self.update_tray_status()
-
     def hide_window(self):
         self.master.withdraw()
 
@@ -303,17 +345,17 @@ class App:
 
     def update_tray_status(self):
         if not self.tray_icon: return
-        
-        device_status_text = f"🟢 Device: {self.connected_device}" if self.connected_device else f"🔴 Device: Disconnected"
-        api_status_text = f"🟢 API: Online" if self.api_status == "Online" else f"🔴 API: Offline"
-        
+
+        device_status_text = f"Device: {self.connected_device}" if self.connected_device else f"Device: Disconnected"
+        api_status_text = f"API: Online" if self.api_status == "Online" else f"API: Offline"
+
         self.tray_icon.menu = self.create_tray_menu(device_status_text, api_status_text)
-        
+
         if self.connected_device:
-            self.tray_icon.icon = create_android_icon(self.SUCCESS_COLOR)
+            self.tray_icon.icon = create_android_icon(self.COLOR_SUCCESS)
             self.tray_icon.title = f"HHT Android Connect: Connected"
         else:
-            self.tray_icon.icon = create_android_icon(self.TEXT_COLOR)
+            self.tray_icon.icon = create_android_icon(self.COLOR_TEXT)
             self.tray_icon.title = "HHT Android Connect: Disconnected"
 
     def create_tray_menu(self, device_status, api_status):
@@ -358,15 +400,15 @@ class App:
             result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             output = result.stdout
             devices = self.parse_device_list(output)
-            
+
             all_known_devices = set(devices)
             if self.connected_device:
                 all_known_devices.add(self.connected_device)
 
             if all_known_devices:
                 for device_id in sorted(list(all_known_devices)):
-                    status = "Connected" if device_id == self.connected_device else "Disconnected"
-                    tag = status.lower()
+                    status = "Connected" if device_id == self.connected_device else "Available"
+                    tag = "connected" if status == "Connected" else "disconnected"
                     self.device_tree.insert('', tk.END, values=(device_id, status), tags=(tag,))
             else:
                 self.device_tree.insert('', tk.END, values=('No devices found.', ''), tags=())
@@ -422,9 +464,13 @@ class App:
         return adb_path if os.path.exists(adb_path) else "adb"
 
     def check_adb(self):
+        from tkinter import messagebox
         try:
             subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             return True
+        except FileNotFoundError:
+            messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
+            return False
         except Exception:
             return False
 
@@ -437,7 +483,7 @@ class App:
             self.master.quit()
 
     def refresh_devices(self):
-        self.refresh_button.config(state='disabled')
+        self.refresh_button.config(state='normal') # Re-enable in case it was disabled
         threading.Thread(target=self._refresh_devices).start()
 
     def parse_device_list(self, adb_output):
@@ -461,7 +507,7 @@ class App:
         if self.connected_device == selected_device:
             messagebox.showinfo("Already Connected", f"Device {selected_device} is already connected.")
             return
-        self.connect_button.config(state='disabled')
+
         threading.Thread(target=self._connect_device, args=(selected_device,)).start()
 
     def disconnect_device(self):
@@ -469,17 +515,17 @@ class App:
         if not self.connected_device:
             messagebox.showwarning("No Connection", "No device is currently connected.")
             return
-        self.disconnect_button.config(state='disabled')
+
         threading.Thread(target=self._disconnect_device).start()
-    
+
     def on_app_quit(self):
         self.is_running = False
         if self.tray_icon:
             self.tray_icon.stop()
-        
+
         if self.api_process:
             self.api_process.terminate()
-            
+
         if self.connected_device:
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
@@ -487,6 +533,7 @@ class App:
             except Exception as e:
                 print(f"Could not disconnect on exit: {e}")
         self.master.destroy()
+
 
 if __name__ == "__main__":
     import tkinter as tk
@@ -496,13 +543,11 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
 
-    app.icon_image.save('app_icon.ico')
-    
     root.protocol('WM_DELETE_WINDOW', app.hide_window)
-    
-    initial_menu = app.create_tray_menu("🔴 Device: Disconnected", "🔴 API: Offline")
-    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('#4A4A4A'), "HHT Android Connect", initial_menu)
-    
+
+    initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
+    icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
+
     app.tray_icon = icon
 
     threading.Thread(target=icon.run, daemon=True).start()
