@@ -119,7 +119,8 @@ class App:
         header_label.pack(anchor='w', pady=(0, 10), padx=10)
         
         # --- Custom Tab Buttons ---
-        tab_frame = ttk.Frame(padded_frame, style='TFrame', background=self.style.lookup('TFrame', 'background'))
+        # FIX: Removed the incorrect 'background' argument from this ttk.Frame
+        tab_frame = ttk.Frame(padded_frame, style='TFrame')
         tab_frame.pack(fill=tk.X, padx=10)
 
         self.device_tab_button = ttk.Button(tab_frame, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
