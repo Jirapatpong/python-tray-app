@@ -9,6 +9,7 @@ import queue
 # --- System Tray Icon Creation ---
 def create_android_icon(color):
     """Generates a simple Android robot icon."""
+    # This function requires Pillow, which will be imported later.
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -28,6 +29,7 @@ def create_android_icon(color):
 
 class App:
     def __init__(self, master):
+        # Import GUI libraries here, inside the class context
         import tkinter as tk
         from tkinter import ttk, messagebox, scrolledtext
         from PIL import ImageTk
@@ -37,6 +39,8 @@ class App:
         self.is_running = True
         self.is_disconnecting = False
         self.api_process = None 
+        self.last_search_term = ""
+        self.last_search_pos = "1.0"
         
         master.title("HHT Android Connect")
         
@@ -48,7 +52,7 @@ class App:
         y_pos = screen_height - app_height - 80
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
 
-        master.configure(background='#F0F2F5')
+        master.configure(background='#F0F2F5') # Main window background
         
         self.icon_image = create_android_icon('grey')
         icon_photo = ImageTk.PhotoImage(self.icon_image)
@@ -56,30 +60,42 @@ class App:
         
         master.resizable(False, False)
 
+        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
-        COLOR_PRIMARY = "#0D6EFD"
-        COLOR_SUCCESS = "#198754"
-        COLOR_DANGER = "#DC3545"
-        COLOR_LIGHT_GREY = "#F8F9FA"
-        COLOR_WHITE = "#FFFFFF"
-        COLOR_DARK_TEXT = "#212529"
-        COLOR_SELECTION = "#8EBBFF"
+        # New color palette from the image
+        COLOR_PRIMARY = "#7B61FF" # Purple
+        COLOR_SUCCESS = "#20C997" # Green
+        COLOR_DANGER = "#DC3545"  # Red
+        COLOR_BG = "#F8F9FA"      # Light background for cards
+        COLOR_WINDOW_BG = "#F0F2F5" # Main window background
+        COLOR_DARK_TEXT = "#343A40"
+        COLOR_LIGHT_TEXT = "#6C757D"
+        COLOR_SELECTION = "#D6D1FF" # Light purple for selection
 
-        self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
-        self.style.configure('TFrame', background=COLOR_WHITE)
-        self.style.configure('TLabel', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT)
-        self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=COLOR_PRIMARY)
-        self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground=COLOR_WHITE, padding=(15, 8), borderwidth=0)
-        self.style.map('Primary.TButton', background=[('active', '#0B5ED7')])
-        self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1, relief='solid')
-        self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, padding=10)
-        self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_WHITE, borderwidth=0)
-        self.style.map("Treeview", background=[('selected', COLOR_SELECTION)])
-        self.style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[10, 5])
-        self.style.configure('TNotebook', background=COLOR_WHITE)
+        self.style.configure('.', background=COLOR_BG, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
+        self.style.configure('TFrame', background=COLOR_BG)
+        self.style.configure('TLabel', background=COLOR_BG, foreground=COLOR_DARK_TEXT)
+        self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=COLOR_DARK_TEXT, background=COLOR_WINDOW_BG)
+        
+        # Button Styles
+        self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground='white', padding=(15, 8), borderwidth=0)
+        self.style.map('Primary.TButton', background=[('active', '#6A52E0')])
+        self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_BG, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1)
+        self.style.map('Secondary.TButton', bordercolor=[('active', COLOR_PRIMARY), ('!active', '#CED4DA')], background=[('active', '#E9ECEF')])
 
+        # Treeview Style
+        self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_BG, padding=12, relief='flat')
+        self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_BG, borderwidth=0, relief='flat')
+        self.style.map("Treeview", background=[('selected', COLOR_SELECTION)], foreground=[('selected', COLOR_DARK_TEXT)])
+        
+        # Notebook (Tabs) Style
+        self.style.configure('TNotebook', background=COLOR_WINDOW_BG, borderwidth=0)
+        self.style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[15, 8], background=COLOR_WINDOW_BG, borderwidth=0)
+        self.style.map('TNotebook.Tab', background=[('selected', COLOR_BG)], foreground=[('selected', COLOR_PRIMARY)])
+
+        # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("Error", "ADB not found.")
@@ -88,8 +104,10 @@ class App:
         self.start_adb_server()
         self.connected_device = None
 
+        # --- UI Creation ---
         self.create_widgets()
 
+        # --- Initial Load & Monitoring ---
         self.refresh_devices()
         self.update_tray_status()
         
@@ -102,19 +120,19 @@ class App:
         import tkinter as tk
         from tkinter import ttk, scrolledtext
 
+        # Main frame with padding to create space around the card
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
         padded_frame.pack(fill=tk.BOTH, expand=True)
 
-        main_frame = ttk.Frame(padded_frame, style='TFrame', padding=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel')
-        header_label.pack(anchor='w', pady=(0, 20))
+        header_label = ttk.Label(padded_frame, text="HHT Android Connect", style='Header.TLabel')
+        header_label.pack(anchor='w', pady=(0, 10), padx=10)
         
-        self.notebook = ttk.Notebook(main_frame)
+        # --- Create Notebook for Tabs ---
+        self.notebook = ttk.Notebook(padded_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True)
         
-        device_tab = ttk.Frame(self.notebook, style='TFrame')
+        # --- Tab 1: Device Status ---
+        device_tab = ttk.Frame(self.notebook, style='TFrame', padding=20)
         self.notebook.add(device_tab, text='Device Status')
         
         buttons_frame = ttk.Frame(device_tab, padding=(0, 20, 0, 0))
@@ -139,14 +157,14 @@ class App:
         self.device_tree.column('device_id', anchor='w', width=400)
         self.device_tree.column('status', anchor='w', width=150)
         self.device_tree.pack(fill=tk.BOTH, expand=True)
-        self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
+        self.device_tree.tag_configure('connected', foreground="#20C997", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
         
-        api_tab = ttk.Frame(self.notebook, style='TFrame')
+        # --- Tab 2: API Log ---
+        api_tab = ttk.Frame(self.notebook, style='TFrame', padding=20)
         self.notebook.add(api_tab, text='API Log')
         
-        # --- Search Bar for API Log ---
-        search_frame = ttk.Frame(api_tab, style='TFrame', padding=5)
+        search_frame = ttk.Frame(api_tab, style='TFrame', padding=(0, 0, 0, 10))
         search_frame.pack(fill=tk.X)
         
         self.search_entry = ttk.Entry(search_frame, font=('Segoe UI', 10))
@@ -155,28 +173,46 @@ class App:
         search_button = ttk.Button(search_frame, text="Search", command=self.search_api_logs, style='Secondary.TButton')
         search_button.pack(side=tk.LEFT)
 
-        self.api_log_text = scrolledtext.ScrolledText(api_tab, wrap=tk.WORD, state='disabled', bg='#1E1E1E', fg='#D4D4D4', font=('Consolas', 10))
-        self.api_log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        # Configure a tag for highlighting search results
+        self.api_log_text = scrolledtext.ScrolledText(api_tab, wrap=tk.WORD, state='disabled', bg='#1E1E1E', fg='#D4D4D4', font=('Consolas', 10), relief='flat', borderwidth=0)
+        self.api_log_text.pack(fill=tk.BOTH, expand=True)
         self.api_log_text.tag_config('search', background='yellow', foreground='black')
+        self.api_log_text.tag_config('current_search', background='#FFA500', foreground='black') # For the current find
 
     def search_api_logs(self):
         import tkinter as tk
-        # Get the search term and remove previous highlights
         search_term = self.search_entry.get()
         self.api_log_text.config(state='normal')
-        self.api_log_text.tag_remove('search', '1.0', tk.END)
+        
+        # If the search term is new, reset the search position and highlights
+        if search_term != self.last_search_term:
+            self.last_search_term = search_term
+            self.last_search_pos = "1.0"
+            self.api_log_text.tag_remove('search', '1.0', tk.END)
+            self.api_log_text.tag_remove('current_search', '1.0', tk.END)
 
-        # If there's a search term, find and highlight all occurrences
         if search_term:
-            start_pos = '1.0'
-            while True:
-                start_pos = self.api_log_text.search(search_term, start_pos, stopindex=tk.END, nocase=True)
-                if not start_pos:
-                    break
+            # Find the next occurrence from the last position
+            start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+            
+            # If not found, loop back to the beginning
+            if not start_pos:
+                self.last_search_pos = "1.0"
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END) # Clear previous current highlight
+                start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+
+            if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
+                
+                # Highlight all matches in yellow, but the current one in orange
                 self.api_log_text.tag_add('search', start_pos, end_pos)
-                start_pos = end_pos
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+                self.api_log_text.tag_add('current_search', start_pos, end_pos)
+                
+                # Scroll to the found text
+                self.api_log_text.see(start_pos)
+                
+                # Update the last position for the next search
+                self.last_search_pos = end_pos
         
         self.api_log_text.config(state='disabled')
 
