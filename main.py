@@ -400,6 +400,7 @@ class App:
             
         if self.connected_device:
             try:
+                # FIX: Moved the subprocess call inside the try block
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e:
