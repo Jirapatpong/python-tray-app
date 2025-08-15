@@ -32,10 +32,19 @@ class App:
         self.master = master
         self.tray_icon = None 
         self.is_running = True # Flag for the monitoring thread
-        self.is_disconnecting = False # 1. Flag to prevent multiple popups
+        self.is_disconnecting = False # Flag to prevent multiple popups
         
         master.title("HHT Android Connect")
-        master.geometry("750x550")
+        
+        # --- Window Size and Position ---
+        app_width = 600 # 20% thinner than 750
+        app_height = 550
+        screen_width = master.winfo_screenwidth()
+        screen_height = master.winfo_screenheight()
+        x_pos = screen_width - app_width - 40 # Position at bottom right with margin
+        y_pos = screen_height - app_height - 80
+        master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
+
         master.configure(background='#F0F2F5')
         
         # Set the window icon
@@ -57,7 +66,7 @@ class App:
         COLOR_WHITE = "#FFFFFF"
         COLOR_DARK_TEXT = "#212529"
         COLOR_SECONDARY_TEXT = "#6C757D"
-        COLOR_SELECTION = "#8EBBFF" # 2. Enhanced selection color
+        COLOR_SELECTION = "#8EBBFF"
 
         self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
         self.style.configure('TFrame', background=COLOR_WHITE)
@@ -123,8 +132,8 @@ class App:
         
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=300)
-        self.device_tree.column('status', anchor='w', width=150)
+        self.device_tree.column('device_id', anchor='w', width=250) # Adjusted width for thinner window
+        self.device_tree.column('status', anchor='w', width=120)
         self.device_tree.pack(fill=tk.BOTH, expand=True)
         self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
@@ -155,7 +164,7 @@ class App:
                 try:
                     result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     if self.connected_device not in result.stdout:
-                        self.is_disconnecting = True # Set flag to prevent re-triggering
+                        self.is_disconnecting = True
                         print(f"Device {self.connected_device} disconnected physically.")
                         self.master.after(0, self.handle_auto_disconnect)
                 except Exception as e:
@@ -170,7 +179,7 @@ class App:
         self.disconnect_button.config(state='disabled')
         self.refresh_devices()
         self.update_tray_status()
-        self.is_disconnecting = False # Reset flag after handling
+        self.is_disconnecting = False
 
     # --- Original Logic ---
     def _refresh_devices(self):
@@ -203,7 +212,7 @@ class App:
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode == 0:
                 self.connected_device = device_id
-                self.is_disconnecting = False # Reset flag on new connection
+                self.is_disconnecting = False
                 messagebox.showinfo("Success", f"Successfully connected to device {device_id}")
                 self.disconnect_button.config(state='normal')
                 self.refresh_devices()
