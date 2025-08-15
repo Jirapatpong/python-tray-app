@@ -162,14 +162,16 @@ class App:
             self.log_to_api_tab("Error: api.exe not found in the application directory.")
             return
 
-        try:
+        try
             # Start the process without a console window
             self.api_process = subprocess.Popen(
                 [api_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                encoding='utf-8', # Specify encoding to prevent errors
+                errors='replace'
             )
             
             # Thread to read the output
@@ -183,6 +185,7 @@ class App:
 
     def read_api_output(self):
         """Reads output from api.exe line by line and puts it in a queue."""
+        # This will block until the process terminates or the pipe closes
         for line in iter(self.api_process.stdout.readline, ''):
             self.api_log_queue.put(line)
         self.api_process.stdout.close()
@@ -194,9 +197,11 @@ class App:
                 line = self.api_log_queue.get_nowait()
                 self.log_to_api_tab(line)
         except queue.Empty:
-            pass
+            pass # No new messages
         finally:
-            self.master.after(100, self.process_api_log_queue)
+            # Keep checking the queue periodically
+            if self.is_running:
+                self.master.after(100, self.process_api_log_queue)
 
     def log_to_api_tab(self, message):
         """Appends a message to the API log text widget."""
