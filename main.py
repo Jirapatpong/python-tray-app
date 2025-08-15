@@ -8,15 +8,22 @@ from PIL import Image, ImageDraw
 import pystray
 
 # --- System Tray Icon Creation ---
-def create_icon_image(color):
-    """Generates a simple square icon image."""
-    width = 64
-    height = 64
-    image = Image.new('RGB', (width, height), 'white')
-    dc = ImageDraw.Draw(image)
-    dc.rectangle(
-        (width // 4, height // 4, width * 3 // 4, height * 3 // 4),
-        fill=color)
+def create_android_icon(color):
+    """Generates a simple Android robot icon."""
+    image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    
+    # Head
+    draw.arc((12, 10, 52, 50), 180, 0, fill=color, width=8)
+    # Eyes
+    draw.ellipse((22, 24, 28, 30), fill='white')
+    draw.ellipse((36, 24, 42, 30), fill='white')
+    # Antennae
+    draw.line((20, 12, 16, 6), fill=color, width=3)
+    draw.line((44, 12, 48, 6), fill=color, width=3)
+    # Body
+    draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
+
     return image
 
 class App:
@@ -24,7 +31,7 @@ class App:
         self.master = master
         self.tray_icon = None # Will be set later
         
-        master.title("System Monitor")
+        master.title("HHT Android Connect") # 1. App name changed
         master.geometry("750x550")
         master.configure(background='#F0F2F5')
         
@@ -34,7 +41,7 @@ class App:
         # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        # ... (rest of the styling is the same)
+        
         COLOR_PRIMARY = "#0D6EFD"
         COLOR_SUCCESS = "#198754"
         COLOR_DANGER = "#DC3545"
@@ -43,6 +50,8 @@ class App:
         COLOR_WHITE = "#FFFFFF"
         COLOR_DARK_TEXT = "#212529"
         COLOR_SECONDARY_TEXT = "#6C757D"
+        COLOR_SELECTION = "#D5E5FF" # 2. More visible selection color
+
         self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
         self.style.configure('TFrame', background=COLOR_WHITE)
         self.style.configure('TLabel', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT)
@@ -56,7 +65,7 @@ class App:
         self.style.map('Secondary.TButton', background=[('active', '#E2E6EA')], bordercolor=[('!active', COLOR_GREY_BORDER)])
         self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, padding=10)
         self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_WHITE, borderwidth=0)
-        self.style.map("Treeview", background=[('selected', '#E7F1FF')])
+        self.style.map("Treeview", background=[('selected', COLOR_SELECTION)])
 
         # --- ADB Setup (Original Logic) ---
         self.ADB_PATH = self.get_adb_path()
@@ -75,19 +84,15 @@ class App:
         self.update_tray_status() # Set initial tray status
 
     def create_widgets(self):
-        # Main container with padding to create the floating card effect
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
         padded_frame.pack(fill=tk.BOTH, expand=True)
 
-        # The main white card
         main_frame = ttk.Frame(padded_frame, style='TFrame', padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Header ---
-        header_label = ttk.Label(main_frame, text="System Monitor", style='Header.TLabel')
+        header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel') # 1. App name changed
         header_label.pack(anchor='w', pady=(0, 20))
 
-        # --- Tabs ---
         tabs_frame = ttk.Frame(main_frame)
         tabs_frame.pack(fill=tk.X)
         
@@ -100,7 +105,6 @@ class App:
         underline = tk.Frame(main_frame, height=2, bg='#0D6EFD')
         underline.pack(fill=tk.X, anchor='n')
 
-        # --- FIX: Pack buttons at the bottom FIRST ---
         buttons_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -114,8 +118,7 @@ class App:
         self.disconnect_button.pack(side=tk.LEFT)
         self.disconnect_button.config(state='disabled')
 
-        # --- FIX: Pack device list LAST to fill remaining space ---
-        tree_frame = ttk.Frame(main_frame, padding=(0, 10, 0, 0)) # Reduced bottom padding
+        tree_frame = ttk.Frame(main_frame, padding=(0, 10, 0, 0))
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
@@ -135,7 +138,7 @@ class App:
         """Hides the main window."""
         self.master.withdraw()
 
-    def show_window(self):
+    def show_window(self, icon=None, item=None):
         """Shows the main window."""
         self.master.deiconify()
         self.master.lift()
@@ -146,18 +149,17 @@ class App:
         if not self.tray_icon:
             return
         if self.connected_device:
-            self.tray_icon.icon = create_icon_image('green')
-            self.tray_icon.title = f"System Monitor: Connected to {self.connected_device}"
+            self.tray_icon.icon = create_android_icon('green') # 6. Icon changed
+            self.tray_icon.title = f"HHT Android Connect: Connected to {self.connected_device}"
         else:
-            self.tray_icon.icon = create_icon_image('grey')
-            self.tray_icon.title = "System Monitor: Disconnected"
+            self.tray_icon.icon = create_android_icon('grey') # 6. Icon changed
+            self.tray_icon.title = "HHT Android Connect: Disconnected"
 
     # ===================================================================
     # Original logic with minor changes to update the tray status
     # ===================================================================
 
     def _refresh_devices(self):
-        # ... (same as before)
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
         try:
@@ -189,7 +191,7 @@ class App:
                 messagebox.showinfo("Success", f"Successfully connected to device {device_id}")
                 self.disconnect_button.config(state='normal')
                 self.refresh_devices()
-                self.update_tray_status() # Update tray on connect
+                self.update_tray_status()
             else:
                 messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}")
         except Exception as e:
@@ -208,7 +210,7 @@ class App:
                 self.connected_device = None
                 self.disconnect_button.config(state='disabled')
                 self.refresh_devices()
-                self.update_tray_status() # Update tray on disconnect
+                self.update_tray_status()
             else:
                 messagebox.showerror("Error", f"Failed to disconnect:\n{result.stderr}")
         except Exception as e:
@@ -275,25 +277,25 @@ class App:
 if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
-    root.withdraw() # Start hidden
+    # 3. Do not start hidden anymore
+    # root.withdraw() 
 
     # --- System Tray Setup ---
-    def quit_app(icon, item):
+    def quit_app(icon, item): # 5. Quit logic
         icon.stop()
         if app.connected_device:
-            app._disconnect_device() # Disconnect on quit
+            # Run disconnect in the main thread to avoid issues on exit
+            root.after(0, app._disconnect_device)
         root.destroy()
 
-    def show_app(icon, item):
-        app.show_window()
+    # 4. Handle the 'X' button to hide the window
+    root.protocol('WM_DELETE_WINDOW', app.hide_window)
 
-    menu = (pystray.MenuItem('Show', show_app, default=True), pystray.MenuItem('Quit', quit_app))
-    icon = pystray.Icon("SystemMonitor", create_icon_image('grey'), "System Monitor", menu)
+    menu = (pystray.MenuItem('Show', app.show_window, default=True), pystray.MenuItem('Quit', quit_app))
+    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", menu) # 1 & 6
     
-    # Pass the icon object to the app
     app.tray_icon = icon
 
-    # Run the icon in a separate thread
     threading.Thread(target=icon.run, daemon=True).start()
 
     root.mainloop()
