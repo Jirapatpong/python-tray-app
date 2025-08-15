@@ -110,8 +110,6 @@ class App:
         header_label = ttk.Label(padded_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 10), padx=10)
         
-        # --- Custom Tab Buttons ---
-        # FIX: Removed the incorrect 'background' argument from this ttk.Frame
         tab_frame = ttk.Frame(padded_frame, style='TFrame')
         tab_frame.pack(fill=tk.X, padx=10)
 
@@ -120,7 +118,6 @@ class App:
         self.api_tab_button = ttk.Button(tab_frame, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
         self.api_tab_button.pack(side=tk.LEFT)
 
-        # --- Content Frames ---
         self.content_frame = tk.Canvas(padded_frame, bg='#FFFFFF', highlightthickness=0)
         self.content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
         self.content_frame.bind("<Configure>", self.draw_rounded_card)
@@ -128,7 +125,6 @@ class App:
         self.device_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
         self.api_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
         
-        # --- Tab 1: Device Status Content ---
         buttons_frame = ttk.Frame(self.device_frame, padding=(0, 20, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
@@ -149,7 +145,6 @@ class App:
         self.device_tree.tag_configure('connected', foreground="#20C997", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
         
-        # --- Tab 2: API Log Content ---
         api_status_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
         api_status_frame.pack(fill=tk.X)
         self.api_status_dot = tk.Canvas(api_status_frame, width=10, height=10, bg='red', highlightthickness=0)
@@ -157,7 +152,6 @@ class App:
         self.api_status_label = ttk.Label(api_status_frame, text="API Status: Offline", font=('Segoe UI', 10, 'bold'), foreground='red')
         self.api_status_label.pack(side=tk.LEFT)
         
-        # Add Refresh API Button
         self.refresh_api_button = ttk.Button(api_status_frame, text="Refresh API", command=self.refresh_api_exe, style='Secondary.TButton')
         self.refresh_api_button.pack(side=tk.RIGHT)
 
@@ -258,7 +252,6 @@ class App:
         for line in iter(self.api_process.stdout.readline, ''):
             self.api_log_queue.put(line)
         self.api_process.stdout.close()
-        # When process ends, set status to offline
         self.master.after(0, self.set_api_status, "Offline")
 
 
@@ -304,8 +297,9 @@ class App:
     def update_tray_status(self):
         if not self.tray_icon: return
         
-        device_status_text = f"🟢 Device: {self.connected_device}" if self.connected_device else f"🔴 Device: Disconnected"
-        api_status_text = f"🟢 API: Online" if self.api_status == "Online" else f"🔴 API: Offline"
+        # FIX: Removed emojis, using plain text for reliability
+        device_status_text = f"Device: {self.connected_device or 'Disconnected'}"
+        api_status_text = f"API Status: {self.api_status}"
         
         self.tray_icon.menu = self.create_tray_menu(device_status_text, api_status_text)
         
