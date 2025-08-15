@@ -58,10 +58,6 @@ class App:
         self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_WHITE, borderwidth=0)
         self.style.map("Treeview", background=[('selected', '#E7F1FF')])
         
-        # Define colors for treeview rows
-        self.style.tag_configure('connected', foreground=COLOR_SUCCESS, font=('Segoe UI', 10, 'bold'))
-        self.style.tag_configure('disconnected', foreground=COLOR_DANGER, font=('Segoe UI', 10, 'bold'))
-
         # --- ADB Setup (Original Logic) ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
@@ -119,6 +115,10 @@ class App:
         self.device_tree.column('status', anchor='w', width=150)
 
         self.device_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Define colors for treeview rows (FIXED)
+        self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
+        self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
 
         # --- Buttons ---
         buttons_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
