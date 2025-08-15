@@ -32,12 +32,13 @@ class App:
         self.master = master
         self.tray_icon = None 
         self.is_running = True # Flag for the monitoring thread
+        self.is_disconnecting = False # 1. Flag to prevent multiple popups
         
         master.title("HHT Android Connect")
         master.geometry("750x550")
         master.configure(background='#F0F2F5')
         
-        # 2. Set the window icon
+        # Set the window icon
         icon_image = create_android_icon('grey')
         icon_photo = ImageTk.PhotoImage(icon_image)
         master.iconphoto(True, icon_photo)
@@ -56,7 +57,7 @@ class App:
         COLOR_WHITE = "#FFFFFF"
         COLOR_DARK_TEXT = "#212529"
         COLOR_SECONDARY_TEXT = "#6C757D"
-        COLOR_SELECTION = "#D5E5FF"
+        COLOR_SELECTION = "#8EBBFF" # 2. Enhanced selection color
 
         self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
         self.style.configure('TFrame', background=COLOR_WHITE)
@@ -86,7 +87,6 @@ class App:
         self.refresh_devices()
         self.update_tray_status()
         
-        # 1. Start the background device monitor
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
 
@@ -100,7 +100,6 @@ class App:
         header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 20))
 
-        # 3. Removed the unused tabs/buttons
         underline = tk.Frame(main_frame, height=2, bg='#0D6EFD')
         underline.pack(fill=tk.X, anchor='n', pady=(0, 10))
 
@@ -152,24 +151,26 @@ class App:
     def device_monitor_loop(self):
         """Periodically checks for device connection changes."""
         while self.is_running:
-            if self.connected_device:
+            if self.connected_device and not self.is_disconnecting:
                 try:
-                    # Check if the connected device is still in the list of attached devices
                     result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     if self.connected_device not in result.stdout:
+                        self.is_disconnecting = True # Set flag to prevent re-triggering
                         print(f"Device {self.connected_device} disconnected physically.")
                         self.master.after(0, self.handle_auto_disconnect)
                 except Exception as e:
                     print(f"Error in monitor loop: {e}")
-            time.sleep(2) # Check every 2 seconds
+            time.sleep(2)
 
     def handle_auto_disconnect(self):
         """Handles UI updates when a device is physically disconnected."""
-        messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
+        if self.connected_device:
+            messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
         self.connected_device = None
         self.disconnect_button.config(state='disabled')
         self.refresh_devices()
         self.update_tray_status()
+        self.is_disconnecting = False # Reset flag after handling
 
     # --- Original Logic ---
     def _refresh_devices(self):
@@ -180,7 +181,6 @@ class App:
             output = result.stdout
             devices = self.parse_device_list(output)
             
-            # Ensure the currently "connected" device is still considered if it's not in the physical list yet
             all_known_devices = set(devices)
             if self.connected_device:
                 all_known_devices.add(self.connected_device)
@@ -203,6 +203,7 @@ class App:
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode == 0:
                 self.connected_device = device_id
+                self.is_disconnecting = False # Reset flag on new connection
                 messagebox.showinfo("Success", f"Successfully connected to device {device_id}")
                 self.disconnect_button.config(state='normal')
                 self.refresh_devices()
@@ -290,11 +291,10 @@ class App:
     
     def on_app_quit(self):
         """Handles cleanup when the application is fully closed."""
-        self.is_running = False # Stop the monitor thread
+        self.is_running = False
         if self.tray_icon:
             self.tray_icon.stop()
         if self.connected_device:
-            # Perform a synchronous disconnect to ensure it completes
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
