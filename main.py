@@ -41,17 +41,18 @@ class App:
 
         master.title("HHT Android Connect")
 
-        # --- Window Centering and Sizing (Reduced and Fixed) ---
-        app_width = 560 # Reduced width by 30% (from 800)
-        app_height = 360 # Reduced height by 40% (from 600)
+        # --- Window Sizing and Positioning (Bottom-Right) ---
+        app_width = 560
+        app_height = 360
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
-        x_pos = (screen_width // 2) - (app_width // 2)
-        y_pos = (screen_height // 2) - (app_height // 2)
+        # Position window in the bottom-right corner with some padding
+        x_pos = screen_width - app_width - 20
+        y_pos = screen_height - app_height - 80 # 80px buffer for taskbar
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
-        master.resizable(False, False) # Make window not resizable
+        master.resizable(False, False)
 
-        # --- Neumorphic Color Palette ---
+        # --- Color Palette ---
         self.COLOR_BG = "#E0E5EC"
         self.COLOR_SHADOW_LIGHT = "#FFFFFF"
         self.COLOR_SHADOW_DARK = "#A3B1C6"
@@ -59,7 +60,8 @@ class App:
         self.COLOR_ACCENT = "#FF6B6B"
         self.COLOR_SUCCESS = "#2EC574"
         self.COLOR_DANGER = "#FF4757"
-        self.COLOR_3D_BG = "#3D4450" # Dark background for 3D tabs/buttons
+        self.COLOR_3D_BG_ACTIVE = "#3D4450"
+        self.COLOR_3D_BG_INACTIVE = "#C8D0DA" # Lighter grey for inactive tabs
 
         master.configure(background=self.COLOR_BG)
 
@@ -67,10 +69,9 @@ class App:
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
 
-        # --- Style Configuration for TTK Widgets ---
+        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
-
         self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
         self.style.configure('TFrame', background=self.COLOR_BG)
         self.style.configure('Treeview',
@@ -83,20 +84,17 @@ class App:
         self.style.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'), background=self.COLOR_BG, relief='flat')
         self.style.map('Treeview.Heading', background=[('active', self.COLOR_BG)])
         self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
-
-        # --- Style for 3D Tabs ---
-        self.style.configure('Tab.TButton', font=('Segoe UI', 10, 'bold'), padding=(15, 5), relief='raised',
-                             background=self.COLOR_3D_BG, foreground='white', borderwidth=2)
-        self.style.map('Tab.TButton',
-                       background=[('active', self.COLOR_SHADOW_DARK), ('selected', self.COLOR_BG)],
-                       foreground=[('selected', self.COLOR_ACCENT)],
-                       relief=[('selected', 'flat')])
         
+        # --- Style for 3D Tabs (Updated) ---
+        self.style.configure('Tab.TButton', font=('Segoe UI', 10, 'bold'), padding=(15, 5), relief='raised', borderwidth=2)
+        self.style.map('Tab.TButton',
+                       background=[('selected', self.COLOR_3D_BG_ACTIVE), ('!selected', self.COLOR_3D_BG_INACTIVE)],
+                       foreground=[('selected', 'white'), ('!selected', self.COLOR_TEXT)])
+
         # --- Style for 3D Buttons ---
         self.style.configure('Raised.TButton', font=('Segoe UI', 9, 'bold'), padding=(10, 5), relief='raised',
-                             background=self.COLOR_3D_BG, foreground='white', borderwidth=2)
+                             background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
-
 
         # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
@@ -121,20 +119,16 @@ class App:
 
         self.master.grid_rowconfigure(2, weight=1)
         self.master.grid_columnconfigure(0, weight=1)
-
         header_frame = tk.Frame(self.master, bg=self.COLOR_BG)
         header_frame.grid(row=0, column=0, sticky='ew', padx=20, pady=(15, 5))
         header_label = tk.Label(header_frame, text="HHT Android Connect", font=('Segoe UI', 16, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         header_label.pack(side='left')
-
         tab_container = tk.Frame(self.master, bg=self.COLOR_BG)
         tab_container.grid(row=1, column=0, sticky='ew', padx=20)
-        
         self.device_tab_btn = ttk.Button(tab_container, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
         self.device_tab_btn.pack(side='left')
         self.api_tab_btn = ttk.Button(tab_container, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
         self.api_tab_btn.pack(side='left', padx=1)
-
         shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
         shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(22, 18), pady=(0, 18))
         shadow_light = tk.Frame(shadow_dark, bg=self.COLOR_SHADOW_LIGHT)
@@ -143,12 +137,10 @@ class App:
         self.content_frame.pack(fill='both', expand=True, padx=(0, 2), pady=(0, 2))
         self.content_frame.grid_rowconfigure(0, weight=1)
         self.content_frame.grid_columnconfigure(0, weight=1)
-
         self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.device_frame.grid(row=0, column=0, sticky='nsew')
         self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.api_frame.grid(row=0, column=0, sticky='nsew')
-
         self.device_frame.grid_rowconfigure(0, weight=1)
         self.device_frame.grid_columnconfigure(0, weight=1)
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
@@ -159,7 +151,6 @@ class App:
         self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
         self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground=self.COLOR_TEXT)
-        
         buttons_frame = tk.Frame(self.device_frame, bg=self.COLOR_BG)
         buttons_frame.grid(row=1, column=0, sticky='ew')
         self.refresh_button = self.create_neumorphic_button(buttons_frame, text="Refresh", command=self.refresh_devices)
@@ -169,7 +160,6 @@ class App:
         self.disconnect_button.config(state='disabled')
         self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
-
         self.api_frame.grid_rowconfigure(1, weight=1)
         self.api_frame.grid_columnconfigure(0, weight=1)
         api_header_frame = tk.Frame(self.api_frame, bg=self.COLOR_BG)
@@ -179,22 +169,18 @@ class App:
         self.api_status_dot.grid(row=0, column=0, sticky='w', pady=4)
         self.api_status_label = tk.Label(api_header_frame, text="API Status:", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.api_status_label.grid(row=0, column=1, sticky='w', padx=5)
-        
         self.search_entry = self.create_neumorphic_entry(api_header_frame)
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
         search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
         self.refresh_api_button.grid(row=0, column=4, sticky='e')
-
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
-        # Reduced font size in ScrolledText
         self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 8), relief='flat', bd=2, highlightthickness=0)
         self.api_log_text.pack(fill='both', expand=True, padx=2, pady=2)
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
-
         self.switch_tab('device')
 
     def create_neumorphic_button(self, parent, text, command, is_accent=False):
@@ -213,7 +199,8 @@ class App:
         import tkinter as tk
         from tkinter import ttk
         entry_frame = tk.Frame(parent, bg=self.COLOR_SHADOW_DARK, padx=2, pady=2)
-        entry = ttk.Entry(entry_frame, font=('Segoe UI', 9), style='TEntry', width=15)
+        # Increased width by 20% (15 -> 18)
+        entry = ttk.Entry(entry_frame, font=('Segoe UI', 9), style='TEntry', width=18)
         entry.pack()
         return entry_frame
 
