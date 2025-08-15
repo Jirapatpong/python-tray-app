@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, scrolledtext
 import subprocess
 import threading
 import os
 import sys
 import time
+import queue
 from PIL import Image, ImageDraw, ImageTk
 import pystray
 
@@ -31,23 +32,23 @@ class App:
     def __init__(self, master):
         self.master = master
         self.tray_icon = None 
-        self.is_running = True # Flag for the monitoring thread
-        self.is_disconnecting = False # Flag to prevent multiple popups
+        self.is_running = True
+        self.is_disconnecting = False
+        self.api_process = None # To hold the api.exe subprocess
         
         master.title("HHT Android Connect")
         
         # --- Window Size and Position ---
-        app_width = 480 # 20% thinner than 600
-        app_height = 440 # 20% shorter than 550
+        app_width = 750 # Increased width for tabs
+        app_height = 550
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
-        x_pos = screen_width - app_width - 40 # Position at bottom right with margin
+        x_pos = screen_width - app_width - 40
         y_pos = screen_height - app_height - 80
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
 
         master.configure(background='#F0F2F5')
         
-        # Set the window icon
         self.icon_image = create_android_icon('grey')
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
@@ -62,10 +63,8 @@ class App:
         COLOR_SUCCESS = "#198754"
         COLOR_DANGER = "#DC3545"
         COLOR_LIGHT_GREY = "#F8F9FA"
-        COLOR_GREY_BORDER = "#DEE2E6"
         COLOR_WHITE = "#FFFFFF"
         COLOR_DARK_TEXT = "#212529"
-        COLOR_SECONDARY_TEXT = "#6C757D"
         COLOR_SELECTION = "#8EBBFF"
 
         self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
@@ -75,15 +74,16 @@ class App:
         self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground=COLOR_WHITE, padding=(15, 8), borderwidth=0)
         self.style.map('Primary.TButton', background=[('active', '#0B5ED7')])
         self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1, relief='solid')
-        self.style.map('Secondary.TButton', background=[('active', '#E2E6EA')], bordercolor=[('!active', COLOR_GREY_BORDER)])
         self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, padding=10)
         self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_WHITE, borderwidth=0)
         self.style.map("Treeview", background=[('selected', COLOR_SELECTION)])
+        self.style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[10, 5])
+        self.style.configure('TNotebook', background=COLOR_WHITE)
 
         # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
-            messagebox.showerror("Error", "ADB not found. Please install ADB or place adb.exe in the same folder as the program.")
+            messagebox.showerror("Error", "ADB not found.")
             master.quit()
             return
         self.start_adb_server()
@@ -98,6 +98,9 @@ class App:
         
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
+        
+        # --- Start api.exe ---
+        self.start_api_exe()
 
     def create_widgets(self):
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
@@ -108,11 +111,16 @@ class App:
 
         header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 20))
-
-        underline = tk.Frame(main_frame, height=2, bg='#0D6EFD')
-        underline.pack(fill=tk.X, anchor='n', pady=(0, 10))
-
-        buttons_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
+        
+        # --- Create Notebook for Tabs ---
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # --- Tab 1: Device Status ---
+        device_tab = ttk.Frame(self.notebook, style='TFrame')
+        self.notebook.add(device_tab, text='Device Status')
+        
+        buttons_frame = ttk.Frame(device_tab, padding=(0, 20, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
@@ -125,18 +133,78 @@ class App:
         self.disconnect_button.pack(side=tk.LEFT)
         self.disconnect_button.config(state='disabled')
 
-        tree_frame = ttk.Frame(main_frame, padding=(0, 10, 0, 0))
+        tree_frame = ttk.Frame(device_tab, padding=(0, 10, 0, 0))
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
-        
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=200) # Adjusted width for thinner window
-        self.device_tree.column('status', anchor='w', width=100)
+        self.device_tree.column('device_id', anchor='w', width=400)
+        self.device_tree.column('status', anchor='w', width=150)
         self.device_tree.pack(fill=tk.BOTH, expand=True)
         self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
+        
+        # --- Tab 2: API Log ---
+        api_tab = ttk.Frame(self.notebook, style='TFrame')
+        self.notebook.add(api_tab, text='API Log')
+        
+        self.api_log_text = scrolledtext.ScrolledText(api_tab, wrap=tk.WORD, state='disabled', bg='#1E1E1E', fg='#D4D4D4', font=('Consolas', 10))
+        self.api_log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+
+    # --- API.EXE Integration ---
+    def start_api_exe(self):
+        self.api_log_queue = queue.Queue()
+        api_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "api.exe")
+        
+        if not os.path.exists(api_path):
+            self.log_to_api_tab("Error: api.exe not found in the application directory.")
+            return
+
+        try:
+            # Start the process without a console window
+            self.api_process = subprocess.Popen(
+                [api_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # Thread to read the output
+            threading.Thread(target=self.read_api_output, daemon=True).start()
+            
+            # Start checking the queue for new messages
+            self.master.after(100, self.process_api_log_queue)
+            
+        except Exception as e:
+            self.log_to_api_tab(f"Failed to start api.exe: {e}")
+
+    def read_api_output(self):
+        """Reads output from api.exe line by line and puts it in a queue."""
+        for line in iter(self.api_process.stdout.readline, ''):
+            self.api_log_queue.put(line)
+        self.api_process.stdout.close()
+
+    def process_api_log_queue(self):
+        """Checks the queue and updates the text widget in the main thread."""
+        try:
+            while True:
+                line = self.api_log_queue.get_nowait()
+                self.log_to_api_tab(line)
+        except queue.Empty:
+            pass
+        finally:
+            self.master.after(100, self.process_api_log_queue)
+
+    def log_to_api_tab(self, message):
+        """Appends a message to the API log text widget."""
+        self.api_log_text.config(state='normal')
+        self.api_log_text.insert(tk.END, message)
+        self.api_log_text.see(tk.END) # Auto-scroll
+        self.api_log_text.config(state='disabled')
+
 
     # --- System Tray Helper Methods ---
     def hide_window(self):
@@ -165,7 +233,6 @@ class App:
                     result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     if self.connected_device not in result.stdout:
                         self.is_disconnecting = True
-                        print(f"Device {self.connected_device} disconnected physically.")
                         self.master.after(0, self.handle_auto_disconnect)
                 except Exception as e:
                     print(f"Error in monitor loop: {e}")
@@ -303,6 +370,11 @@ class App:
         self.is_running = False
         if self.tray_icon:
             self.tray_icon.stop()
+        
+        # Terminate api.exe
+        if self.api_process:
+            self.api_process.terminate()
+            
         if self.connected_device:
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
@@ -316,7 +388,6 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
 
-    # --- Save the icon to a file to be used by PyInstaller ---
     app.icon_image.save('app_icon.ico')
 
     def quit_app(icon, item):
@@ -332,3 +403,4 @@ if __name__ == "__main__":
     threading.Thread(target=icon.run, daemon=True).start()
 
     root.mainloop()
+
