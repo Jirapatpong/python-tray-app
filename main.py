@@ -37,17 +37,17 @@ class App:
         
         master.title("HHT Android Connect")
         
-        app_width = 750
-        app_height = 550
+        app_width = 800
+        app_height = 600
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
-        x_pos = screen_width - app_width - 40
-        y_pos = screen_height - app_height - 80
+        x_pos = (screen_width - app_width) // 2
+        y_pos = (screen_height - app_height) // 2
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
 
-        master.configure(background='#F5F5F5') # Main window background
+        master.configure(background='#F8FAFC') # Light slate background
         
-        self.icon_image = create_android_icon('grey')
+        self.icon_image = create_android_icon('#10B981')
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
         
@@ -57,33 +57,36 @@ class App:
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
-        COLOR_PRIMARY = "#D32F2F" # Professional Red
-        COLOR_PRIMARY_LIGHT = "#E57373"
-        COLOR_SUCCESS = "#2E7D32" # Darker Green
+        COLOR_PRIMARY = "#10B981" # Emerald Green
+        COLOR_PRIMARY_LIGHT = "#34D399"
+        COLOR_SECONDARY = "#3B82F6" # Blue
+        COLOR_SECONDARY_LIGHT = "#60A5FA"
         COLOR_BG = "#FFFFFF"      # White background for cards
-        COLOR_WINDOW_BG = "#F5F5F5"
-        COLOR_DARK_TEXT = "#212121"
-        COLOR_SELECTION = "#FFCDD2" # Light Red for selection
-        COLOR_SHADOW = "#BDBDBD"
+        COLOR_WINDOW_BG = "#F8FAFC" # Slate background
+        COLOR_DARK_TEXT = "#1F2937" # Gray-800
+        COLOR_SUBTEXT = "#6B7280" # Gray-500
+        COLOR_SUCCESS = "#10B981"
+        COLOR_ERROR = "#EF4444"
+        COLOR_SHADOW = "#E2E8F0" # Slate-200
 
-        self.style.configure('.', background=COLOR_BG, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10), borderwidth=0, relief='flat')
+        self.style.configure('.', background=COLOR_BG, foreground=COLOR_DARK_TEXT, font=('Inter', 11), borderwidth=0, relief='flat')
         self.style.configure('TFrame', background=COLOR_BG)
         self.style.configure('Card.TFrame', background=COLOR_BG)
         self.style.configure('TLabel', background=COLOR_BG, foreground=COLOR_DARK_TEXT)
-        self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=COLOR_DARK_TEXT, background=COLOR_WINDOW_BG)
+        self.style.configure('Header.TLabel', font=('Inter', 20, 'bold'), foreground=COLOR_DARK_TEXT, background=COLOR_WINDOW_BG)
         
-        self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground='white', padding=(15, 8), borderwidth=0, relief='flat')
+        self.style.configure('Primary.TButton', font=('Inter', 11, 'bold'), background=COLOR_PRIMARY, foreground='white', padding=(20, 10), borderwidth=0, relief='flat')
         self.style.map('Primary.TButton', background=[('active', COLOR_PRIMARY_LIGHT)])
-        self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_BG, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1)
-        self.style.map('Secondary.TButton', bordercolor=[('active', COLOR_PRIMARY), ('!active', '#CED4DA')], background=[('active', '#E9ECEF')])
+        self.style.configure('Secondary.TButton', font=('Inter', 11, 'bold'), background=COLOR_BG, foreground=COLOR_SECONDARY, padding=(20, 10), borderwidth=1, bordercolor=COLOR_SECONDARY)
+        self.style.map('Secondary.TButton', bordercolor=[('active', COLOR_SECONDARY_LIGHT)], background=[('active', '#F1F5F9')])
 
-        self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_BG, padding=12, relief='flat')
-        self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_BG, borderwidth=0, relief='flat')
-        self.style.map("Treeview", background=[('selected', COLOR_SELECTION)], foreground=[('selected', COLOR_DARK_TEXT)])
+        self.style.configure("Treeview.Heading", font=('Inter', 11, 'bold'), background=COLOR_BG, foreground=COLOR_DARK_TEXT, padding=12, relief='flat')
+        self.style.configure("Treeview", rowheight=50, font=('Inter', 11), fieldbackground=COLOR_BG, borderwidth=0, relief='flat')
+        self.style.map("Treeview", background=[('selected', '#E6F3FF')], foreground=[('selected', COLOR_DARK_TEXT)])
         
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
-            messagebox.showerror("Error", "ADB not found.")
+            messagebox.showerror("Error", "ADB not found.", parent=master)
             master.quit()
             return
         self.start_adb_server()
@@ -102,75 +105,78 @@ class App:
         import tkinter as tk
         from tkinter import ttk, scrolledtext
 
-        padded_frame = tk.Frame(self.master, background='#F5F5F5', padx=20, pady=20)
+        padded_frame = tk.Frame(self.master, background='#F8FAFC', padx=24, pady=24)
         padded_frame.pack(fill=tk.BOTH, expand=True)
 
-        header_label = ttk.Label(padded_frame, text="HHT Android Connect", style='Header.TLabel')
-        header_label.pack(anchor='w', pady=(0, 10), padx=10)
+        header_frame = tk.Frame(padded_frame, background='#F8FAFC')
+        header_frame.pack(fill=tk.X, pady=(0, 16))
+        header_label = ttk.Label(header_frame, text="HHT Android Connect", style='Header.TLabel')
+        header_label.pack(side=tk.LEFT)
         
-        # --- Custom Tab Buttons with Shadow ---
-        tab_container = tk.Frame(padded_frame, bg='#F5F5F5')
-        tab_container.pack(fill=tk.X, padx=10)
+        # --- Tab Navigation ---
+        tab_container = tk.Frame(padded_frame, bg='#F8FAFC')
+        tab_container.pack(fill=tk.X, pady=(0, 16))
         
-        self.device_tab_canvas = tk.Canvas(tab_container, width=150, height=40, bg='#F5F5F5', highlightthickness=0)
-        self.device_tab_canvas.pack(side=tk.LEFT)
-        self.api_tab_canvas = tk.Canvas(tab_container, width=150, height=40, bg='#F5F5F5', highlightthickness=0)
-        self.api_tab_canvas.pack(side=tk.LEFT)
+        self.device_tab_button = ttk.Button(tab_container, text="Device Status", command=lambda: self.switch_tab('device'), style='Secondary.TButton')
+        self.device_tab_button.pack(side=tk.LEFT, padx=(0, 8))
+        self.api_tab_button = ttk.Button(tab_container, text="API Log", command=lambda: self.switch_tab('api'), style='Secondary.TButton')
+        self.api_tab_button.pack(side=tk.LEFT)
         
-        self.device_tab_canvas.bind("<Button-1>", lambda e: self.switch_tab('device'))
-        self.api_tab_canvas.bind("<Button-1>", lambda e: self.switch_tab('api'))
-
-        # --- Main Content Card with Shadow ---
-        shadow = tk.Canvas(padded_frame, bg='#F5F5F5', highlightthickness=0)
-        shadow.pack(fill=tk.BOTH, expand=True, padx=13, pady=(0,13))
+        # --- Main Content Card ---
+        shadow = tk.Canvas(padded_frame, bg='#F8FAFC', highlightthickness=0)
+        shadow.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         self.content_frame = tk.Canvas(shadow, bg='#FFFFFF', highlightthickness=0)
         self.content_frame.pack(fill=tk.BOTH, expand=True)
         shadow.bind("<Configure>", lambda e: self.draw_shadow(shadow, self.content_frame))
         self.content_frame.bind("<Configure>", self.draw_rounded_card)
 
-        self.device_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
-        self.api_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
+        self.device_frame = ttk.Frame(self.content_frame, style='TFrame', padding=24)
+        self.api_frame = ttk.Frame(self.content_frame, style='TFrame', padding=24)
         
-        buttons_frame = ttk.Frame(self.device_frame, padding=(0, 20, 0, 0))
+        # --- Device Tab ---
+        buttons_frame = ttk.Frame(self.device_frame, padding=(0, 16, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
-        self.refresh_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.refresh_button.pack(side=tk.LEFT, padx=(0, 8))
         self.connect_button = ttk.Button(buttons_frame, text="Connect Selected", command=self.connect_device, style='Primary.TButton')
-        self.connect_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.connect_button.pack(side=tk.LEFT, padx=(0, 8))
         self.disconnect_button = ttk.Button(buttons_frame, text="Disconnect", command=self.disconnect_device, style='Secondary.TButton')
         self.disconnect_button.pack(side=tk.LEFT)
         self.disconnect_button.config(state='disabled')
-        tree_frame = ttk.Frame(self.device_frame, padding=(0, 10, 0, 0))
+        tree_frame = ttk.Frame(self.device_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
         self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
-        self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
-        self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=400)
+        self.device_tree.heading('device_id', text='Device ID', anchor='w')
+        self.device_tree.heading('status', text='Status', anchor='w')
+        self.device_tree.column('device_id', anchor='w', width=450)
         self.device_tree.column('status', anchor='w', width=150)
         self.device_tree.pack(fill=tk.BOTH, expand=True)
-        self.device_tree.tag_configure('connected', foreground="#2E7D32", font=('Segoe UI', 10, 'bold'))
-        self.device_tree.tag_configure('disconnected', foreground="#D32F2F", font=('Segoe UI', 10, 'bold'))
+        self.device_tree.tag_configure('connected', foreground=COLOR_SUCCESS, font=('Inter', 11, 'bold'))
+        self.device_tree.tag_configure('disconnected', foreground=COLOR_ERROR, font=('Inter', 11, 'bold'))
         
-        api_status_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
+        # --- API Tab ---
+        api_status_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 16))
         api_status_frame.pack(fill=tk.X)
-        self.api_status_dot = tk.Canvas(api_status_frame, width=10, height=10, bg='red', highlightthickness=0)
-        self.api_status_dot.pack(side=tk.LEFT, padx=(0, 5))
-        self.api_status_label = ttk.Label(api_status_frame, text="API Status: Offline", font=('Segoe UI', 10, 'bold'), foreground='red')
+        status_container = tk.Frame(api_status_frame, bg='#FFFFFF')
+        status_container.pack(side=tk.LEFT)
+        self.api_status_dot = tk.Canvas(status_container, width=12, height=12, bg='#EF4444', highlightthickness=0)
+        self.api_status_dot.pack(side=tk.LEFT, padx=(0, 8), pady=2)
+        self.api_status_label = ttk.Label(status_container, text="API Status: Offline", font=('Inter', 11, 'bold'), foreground='#EF4444')
         self.api_status_label.pack(side=tk.LEFT)
         
         self.refresh_api_button = ttk.Button(api_status_frame, text="Refresh API", command=self.refresh_api_exe, style='Secondary.TButton')
         self.refresh_api_button.pack(side=tk.RIGHT)
 
-        search_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
+        search_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 16))
         search_frame.pack(fill=tk.X)
-        self.search_entry = ttk.Entry(search_frame, font=('Segoe UI', 10))
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.search_entry = ttk.Entry(search_frame, font=('Inter', 11))
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         search_button = ttk.Button(search_frame, text="Search", command=self.search_api_logs, style='Secondary.TButton')
         search_button.pack(side=tk.LEFT)
-        self.api_log_text = scrolledtext.ScrolledText(self.api_frame, wrap=tk.WORD, state='disabled', bg='#2B2B2B', fg='#A9B7C6', font=('Consolas', 10), relief='flat', borderwidth=0)
+        self.api_log_text = scrolledtext.ScrolledText(self.api_frame, wrap=tk.WORD, state='disabled', bg='#1F2937', fg='#F3F4F6', font=('JetBrains Mono', 10), relief='flat', borderwidth=0)
         self.api_log_text.pack(fill=tk.BOTH, expand=True)
-        self.api_log_text.tag_config('search', background='yellow', foreground='black')
-        self.api_log_text.tag_config('current_search', background='#FFA500', foreground='black')
+        self.api_log_text.tag_config('search', background='#FBBF24', foreground='#1F2937')
+        self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='#1F2937')
         
         self.switch_tab('device')
 
@@ -178,25 +184,24 @@ class App:
         canvas.delete("shadow")
         width = content_canvas.winfo_width()
         height = content_canvas.winfo_height()
-        # Draw a slightly larger, semi-transparent rounded rectangle for the shadow
-        canvas.create_oval(3, 3, 23, 23, fill="#BDBDBD", outline="")
-        canvas.create_oval(width - 17, 3, width + 3, 23, fill="#BDBDBD", outline="")
-        canvas.create_oval(3, height - 17, 23, height + 3, fill="#BDBDBD", outline="")
-        canvas.create_oval(width - 17, height - 17, width + 3, height + 3, fill="#BDBDBD", outline="")
-        canvas.create_rectangle(13, 3, width - 7, height + 3, fill="#BDBDBD", outline="")
-        canvas.create_rectangle(3, 13, width + 3, height - 7, fill="#BDBDBD", outline="")
-        content_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        canvas.create_oval(4, 4, 24, 24, fill="#E2E8F0", outline="")
+        canvas.create_oval(width - 20, 4, width, 24, fill="#E2E8F0", outline="")
+        canvas.create_oval(4, height - 20, 24, height, fill="#E2E8F0", outline="")
+        canvas.create_oval(width - 20, height - 20, width, height, fill="#E2E8F0", outline="")
+        canvas.create_rectangle(14, 4, width - 10, height, fill="#E2E8F0", outline="")
+        canvas.create_rectangle(4, 14, width, height - 10, fill="#E2E8F0", outline="")
+        content_canvas.place(x=2, y=2, relwidth=1, relheight=1)
 
     def draw_rounded_card(self, event):
         self.content_frame.delete("rounded_rect")
         width = event.width
         height = event.height
-        self.content_frame.create_oval(0, 0, 20, 20, fill="#FFFFFF", outline="")
-        self.content_frame.create_oval(width - 20, 0, width, 20, fill="#FFFFFF", outline="")
-        self.content_frame.create_oval(0, height - 20, 20, height, fill="#FFFFFF", outline="")
-        self.content_frame.create_oval(width - 20, height - 20, width, height, fill="#FFFFFF", outline="")
-        self.content_frame.create_rectangle(10, 0, width - 10, height, fill="#FFFFFF", outline="")
-        self.content_frame.create_rectangle(0, 10, width, height - 10, fill="#FFFFFF", outline="")
+        self.content_frame.create_oval(0, 0, 24, 24, fill="#FFFFFF", outline="")
+        self.content_frame.create_oval(width - 24, 0, width, 24, fill="#FFFFFF", outline="")
+        self.content_frame.create_oval(0, height - 24, 24, height, fill="#FFFFFF", outline="")
+        self.content_frame.create_oval(width - 24, height - 24, width, height, fill="#FFFFFF", outline="")
+        self.content_frame.create_rectangle(12, 0, width - 12, height, fill="#FFFFFF", outline="")
+        self.content_frame.create_rectangle(0, 12, width, height - 12, fill="#FFFFFF", outline="")
 
     def draw_tab(self, canvas, text, is_active):
         canvas.delete("all")
@@ -204,31 +209,25 @@ class App:
         height = canvas.winfo_height()
         
         if is_active:
-            # Draw shadow
-            canvas.create_oval(3, 8, 23, 28, fill="#BDBDBD", outline="")
-            canvas.create_oval(width - 23, 8, width - 3, 28, fill="#BDBDBD", outline="")
-            canvas.create_rectangle(13, 8, width - 13, 28, fill="#BDBDBD", outline="")
-            # Draw button
             canvas.create_oval(0, 5, 20, 25, fill="#FFFFFF", outline="")
             canvas.create_oval(width - 20, 5, width, 25, fill="#FFFFFF", outline="")
             canvas.create_rectangle(10, 5, width - 10, 25, fill="#FFFFFF", outline="")
-            canvas.create_text(width/2, 15, text=text, font=('Segoe UI', 10, 'bold'), fill="#D32F2F")
+            canvas.create_text(width/2, 15, text=text, font=('Inter', 11, 'bold'), fill="#10B981")
         else:
-            canvas.create_text(width/2, 15, text=text, font=('Segoe UI', 10, 'bold'), fill="#212121")
-
+            canvas.create_text(width/2, 15, text=text, font=('Inter', 11), fill="#6B7280")
 
     def switch_tab(self, tab_name):
         self.device_frame.place_forget()
         self.api_frame.place_forget()
-        self.draw_tab(self.device_tab_canvas, "Device Status", False)
-        self.draw_tab(self.api_tab_canvas, "API Log", False)
+        self.device_tab_button.configure(style='Secondary.TButton')
+        self.api_tab_button.configure(style='Secondary.TButton')
 
         if tab_name == 'device':
             self.device_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.draw_tab(self.device_tab_canvas, "Device Status", True)
+            self.device_tab_button.configure(style='Primary.TButton')
         else:
             self.api_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.draw_tab(self.api_tab_canvas, "API Log", True)
+            self.api_tab_button.configure(style='Primary.TButton')
 
     def search_api_logs(self):
         import tkinter as tk
@@ -292,7 +291,6 @@ class App:
         self.api_process.stdout.close()
         self.master.after(0, self.set_api_status, "Offline")
 
-
     def process_api_log_queue(self):
         import tkinter as tk
         try:
@@ -317,11 +315,11 @@ class App:
     def set_api_status(self, status):
         self.api_status = status
         if status == "Online":
-            self.api_status_dot.config(bg='#20C997')
-            self.api_status_label.config(text="API Status: Online", foreground='#20C997')
+            self.api_status_dot.config(bg='#10B981')
+            self.api_status_label.config(text="API Status: Online", foreground='#10B981')
         else:
-            self.api_status_dot.config(bg='#DC3545')
-            self.api_status_label.config(text="API Status: Offline", foreground='#DC3545')
+            self.api_status_dot.config(bg='#EF4444')
+            self.api_status_label.config(text="API Status: Offline", foreground='#EF4444')
         self.update_tray_status()
 
     def hide_window(self):
@@ -341,10 +339,10 @@ class App:
         self.tray_icon.menu = self.create_tray_menu(device_status_text, api_status_text)
         
         if self.connected_device:
-            self.tray_icon.icon = create_android_icon('green')
+            self.tray_icon.icon = create_android_icon('#10B981')
             self.tray_icon.title = f"HHT Android Connect: Connected"
         else:
-            self.tray_icon.icon = create_android_icon('grey')
+            self.tray_icon.icon = create_android_icon('#6B7280')
             self.tray_icon.title = "HHT Android Connect: Disconnected"
 
     def create_tray_menu(self, device_status, api_status):
@@ -519,7 +517,6 @@ class App:
                 print(f"Could not disconnect on exit: {e}")
         self.master.destroy()
 
-
 if __name__ == "__main__":
     import tkinter as tk
     from PIL import Image
@@ -533,7 +530,7 @@ if __name__ == "__main__":
     root.protocol('WM_DELETE_WINDOW', app.hide_window)
     
     initial_menu = app.create_tray_menu("🔴 Device: Disconnected", "🔴 API: Offline")
-    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", initial_menu)
+    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('#6B7280'), "HHT Android Connect", initial_menu)
     
     app.tray_icon = icon
 
