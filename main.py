@@ -4,7 +4,8 @@ import subprocess
 import threading
 import os
 import sys
-from PIL import Image, ImageDraw
+import time
+from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 # --- System Tray Icon Creation ---
@@ -29,13 +30,18 @@ def create_android_icon(color):
 class App:
     def __init__(self, master):
         self.master = master
-        self.tray_icon = None # Will be set later
+        self.tray_icon = None 
+        self.is_running = True # Flag for the monitoring thread
         
-        master.title("HHT Android Connect") # 1. App name changed
+        master.title("HHT Android Connect")
         master.geometry("750x550")
         master.configure(background='#F0F2F5')
         
-        # --- Make the window non-resizable ---
+        # 2. Set the window icon
+        icon_image = create_android_icon('grey')
+        icon_photo = ImageTk.PhotoImage(icon_image)
+        master.iconphoto(True, icon_photo)
+        
         master.resizable(False, False)
 
         # --- Style Configuration ---
@@ -50,15 +56,12 @@ class App:
         COLOR_WHITE = "#FFFFFF"
         COLOR_DARK_TEXT = "#212529"
         COLOR_SECONDARY_TEXT = "#6C757D"
-        COLOR_SELECTION = "#D5E5FF" # 2. More visible selection color
+        COLOR_SELECTION = "#D5E5FF"
 
         self.style.configure('.', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
         self.style.configure('TFrame', background=COLOR_WHITE)
         self.style.configure('TLabel', background=COLOR_WHITE, foreground=COLOR_DARK_TEXT)
         self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=COLOR_PRIMARY)
-        self.style.configure('Tab.TButton', font=('Segoe UI', 11, 'bold'), borderwidth=0, padding=(20, 10))
-        self.style.map('Tab.TButton', background=[('active', COLOR_LIGHT_GREY), ('!active', COLOR_WHITE)], foreground=[('!active', COLOR_SECONDARY_TEXT)])
-        self.style.configure('ActiveTab.TButton', foreground=COLOR_PRIMARY)
         self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground=COLOR_WHITE, padding=(15, 8), borderwidth=0)
         self.style.map('Primary.TButton', background=[('active', '#0B5ED7')])
         self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_LIGHT_GREY, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1, relief='solid')
@@ -67,7 +70,7 @@ class App:
         self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_WHITE, borderwidth=0)
         self.style.map("Treeview", background=[('selected', COLOR_SELECTION)])
 
-        # --- ADB Setup (Original Logic) ---
+        # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("Error", "ADB not found. Please install ADB or place adb.exe in the same folder as the program.")
@@ -79,9 +82,13 @@ class App:
         # --- UI Creation ---
         self.create_widgets()
 
-        # --- Initial Load ---
+        # --- Initial Load & Monitoring ---
         self.refresh_devices()
-        self.update_tray_status() # Set initial tray status
+        self.update_tray_status()
+        
+        # 1. Start the background device monitor
+        self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
+        self.monitor_thread.start()
 
     def create_widgets(self):
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
@@ -90,20 +97,12 @@ class App:
         main_frame = ttk.Frame(padded_frame, style='TFrame', padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel') # 1. App name changed
+        header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 20))
 
-        tabs_frame = ttk.Frame(main_frame)
-        tabs_frame.pack(fill=tk.X)
-        
-        device_status_tab = ttk.Button(tabs_frame, text="Device Status", style='ActiveTab.TButton', state='disabled')
-        device_status_tab.pack(side=tk.LEFT)
-        
-        api_connection_tab = ttk.Button(tabs_frame, text="API Connection", style='Tab.TButton', state='disabled')
-        api_connection_tab.pack(side=tk.LEFT)
-        
+        # 3. Removed the unused tabs/buttons
         underline = tk.Frame(main_frame, height=2, bg='#0D6EFD')
-        underline.pack(fill=tk.X, anchor='n')
+        underline.pack(fill=tk.X, anchor='n', pady=(0, 10))
 
         buttons_frame = ttk.Frame(main_frame, padding=(0, 20, 0, 0))
         buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
@@ -125,40 +124,54 @@ class App:
         
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-
         self.device_tree.column('device_id', anchor='w', width=300)
         self.device_tree.column('status', anchor='w', width=150)
-
         self.device_tree.pack(fill=tk.BOTH, expand=True)
         self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
 
     # --- System Tray Helper Methods ---
     def hide_window(self):
-        """Hides the main window."""
         self.master.withdraw()
 
     def show_window(self, icon=None, item=None):
-        """Shows the main window."""
         self.master.deiconify()
         self.master.lift()
         self.master.focus_force()
 
     def update_tray_status(self):
-        """Updates the tray icon and tooltip based on connection status."""
-        if not self.tray_icon:
-            return
+        if not self.tray_icon: return
         if self.connected_device:
-            self.tray_icon.icon = create_android_icon('green') # 6. Icon changed
+            self.tray_icon.icon = create_android_icon('green')
             self.tray_icon.title = f"HHT Android Connect: Connected to {self.connected_device}"
         else:
-            self.tray_icon.icon = create_android_icon('grey') # 6. Icon changed
+            self.tray_icon.icon = create_android_icon('grey')
             self.tray_icon.title = "HHT Android Connect: Disconnected"
 
-    # ===================================================================
-    # Original logic with minor changes to update the tray status
-    # ===================================================================
+    # --- Background Monitoring ---
+    def device_monitor_loop(self):
+        """Periodically checks for device connection changes."""
+        while self.is_running:
+            if self.connected_device:
+                try:
+                    # Check if the connected device is still in the list of attached devices
+                    result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    if self.connected_device not in result.stdout:
+                        print(f"Device {self.connected_device} disconnected physically.")
+                        self.master.after(0, self.handle_auto_disconnect)
+                except Exception as e:
+                    print(f"Error in monitor loop: {e}")
+            time.sleep(2) # Check every 2 seconds
 
+    def handle_auto_disconnect(self):
+        """Handles UI updates when a device is physically disconnected."""
+        messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
+        self.connected_device = None
+        self.disconnect_button.config(state='disabled')
+        self.refresh_devices()
+        self.update_tray_status()
+
+    # --- Original Logic ---
     def _refresh_devices(self):
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
@@ -166,12 +179,14 @@ class App:
             result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             output = result.stdout
             devices = self.parse_device_list(output)
-            connected_devices = []
+            
+            # Ensure the currently "connected" device is still considered if it's not in the physical list yet
+            all_known_devices = set(devices)
             if self.connected_device:
-                connected_devices.append(self.connected_device)
-            all_known_devices = list(set(devices + connected_devices))
+                all_known_devices.add(self.connected_device)
+
             if all_known_devices:
-                for device_id in all_known_devices:
+                for device_id in sorted(list(all_known_devices)):
                     status = "Connected" if device_id == self.connected_device else "Disconnected"
                     tag = status.lower()
                     self.device_tree.insert('', tk.END, values=(device_id, status), tags=(tag,))
@@ -200,8 +215,7 @@ class App:
             self.connect_button.config(state='normal')
 
     def _disconnect_device(self):
-        if not self.connected_device:
-            return
+        if not self.connected_device: return
         try:
             result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -273,26 +287,33 @@ class App:
             return
         self.disconnect_button.config(state='disabled')
         threading.Thread(target=self._disconnect_device).start()
+    
+    def on_app_quit(self):
+        """Handles cleanup when the application is fully closed."""
+        self.is_running = False # Stop the monitor thread
+        if self.tray_icon:
+            self.tray_icon.stop()
+        if self.connected_device:
+            # Perform a synchronous disconnect to ensure it completes
+            try:
+                subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            except Exception as e:
+                print(f"Could not disconnect on exit: {e}")
+        self.master.destroy()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
-    # 3. Do not start hidden anymore
-    # root.withdraw() 
 
-    # --- System Tray Setup ---
-    def quit_app(icon, item): # 5. Quit logic
-        icon.stop()
-        if app.connected_device:
-            # Run disconnect in the main thread to avoid issues on exit
-            root.after(0, app._disconnect_device)
-        root.destroy()
+    def quit_app(icon, item):
+        app.on_app_quit()
 
-    # 4. Handle the 'X' button to hide the window
     root.protocol('WM_DELETE_WINDOW', app.hide_window)
 
     menu = (pystray.MenuItem('Show', app.show_window, default=True), pystray.MenuItem('Quit', quit_app))
-    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", menu) # 1 & 6
+    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", menu)
     
     app.tray_icon = icon
 
