@@ -6,30 +6,30 @@ import time
 import queue
 # GUI imports will be moved into the main block to support headless building
 
-# --- System Tray Icon Creation ---
+# --- Image Generation for UI ---
+def create_rounded_rectangle(width, height, radius, color):
+    """Generates a rounded rectangle image."""
+    from PIL import Image, ImageDraw
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, width, height), radius, fill=color)
+    return image
+
 def create_android_icon(color):
     """Generates a simple Android robot icon."""
-    # This function requires Pillow, which will be imported later.
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    
-    # Head
     draw.arc((12, 10, 52, 50), 180, 0, fill=color, width=8)
-    # Eyes
     draw.ellipse((22, 24, 28, 30), fill='white')
     draw.ellipse((36, 24, 42, 30), fill='white')
-    # Antennae
     draw.line((20, 12, 16, 6), fill=color, width=3)
     draw.line((44, 12, 48, 6), fill=color, width=3)
-    # Body
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
-
     return image
 
 class App:
     def __init__(self, master):
-        # Import GUI libraries here, inside the class context
         import tkinter as tk
         from tkinter import ttk, messagebox, scrolledtext
         from PIL import ImageTk
@@ -41,6 +41,7 @@ class App:
         self.api_process = None 
         self.last_search_term = ""
         self.last_search_pos = "1.0"
+        self.api_status = "Offline"
         
         master.title("HHT Android Connect")
         
@@ -52,7 +53,7 @@ class App:
         y_pos = screen_height - app_height - 80
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
 
-        master.configure(background='#F0F2F5') # Main window background
+        master.configure(background='#F0F2F5')
         
         self.icon_image = create_android_icon('grey')
         icon_photo = ImageTk.PhotoImage(self.icon_image)
@@ -64,38 +65,32 @@ class App:
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
-        # New color palette from the image
-        COLOR_PRIMARY = "#7B61FF" # Purple
+        COLOR_PRIMARY = "#FF6B6B" # Soft Red
         COLOR_SUCCESS = "#20C997" # Green
-        COLOR_DANGER = "#DC3545"  # Red
-        COLOR_BG = "#F8F9FA"      # Light background for cards
-        COLOR_WINDOW_BG = "#F0F2F5" # Main window background
+        COLOR_DANGER = "#DC3545"
+        COLOR_BG = "#FFFFFF"      # White background for cards
+        COLOR_WINDOW_BG = "#F0F2F5"
         COLOR_DARK_TEXT = "#343A40"
-        COLOR_LIGHT_TEXT = "#6C757D"
-        COLOR_SELECTION = "#D6D1FF" # Light purple for selection
+        COLOR_SELECTION = "#FFD1D1" # Light Red for selection
 
-        self.style.configure('.', background=COLOR_BG, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10))
+        self.style.configure('.', background=COLOR_BG, foreground=COLOR_DARK_TEXT, font=('Segoe UI', 10), borderwidth=0, relief='flat')
         self.style.configure('TFrame', background=COLOR_BG)
+        self.style.configure('Card.TFrame', background=COLOR_BG, relief='solid', borderwidth=1, bordercolor='#E9ECEF')
         self.style.configure('TLabel', background=COLOR_BG, foreground=COLOR_DARK_TEXT)
         self.style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground=COLOR_DARK_TEXT, background=COLOR_WINDOW_BG)
         
-        # Button Styles
         self.style.configure('Primary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_PRIMARY, foreground='white', padding=(15, 8), borderwidth=0)
-        self.style.map('Primary.TButton', background=[('active', '#6A52E0')])
+        self.style.map('Primary.TButton', background=[('active', '#E55A5A')])
         self.style.configure('Secondary.TButton', font=('Segoe UI', 10, 'bold'), background=COLOR_BG, foreground=COLOR_DARK_TEXT, padding=(15, 8), borderwidth=1)
         self.style.map('Secondary.TButton', bordercolor=[('active', COLOR_PRIMARY), ('!active', '#CED4DA')], background=[('active', '#E9ECEF')])
 
-        # Treeview Style
         self.style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'), background=COLOR_BG, padding=12, relief='flat')
         self.style.configure("Treeview", rowheight=40, font=('Consolas', 11), fieldbackground=COLOR_BG, borderwidth=0, relief='flat')
         self.style.map("Treeview", background=[('selected', COLOR_SELECTION)], foreground=[('selected', COLOR_DARK_TEXT)])
         
-        # Notebook (Tabs) Style
-        self.style.configure('TNotebook', background=COLOR_WINDOW_BG, borderwidth=0)
-        self.style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[15, 8], background=COLOR_WINDOW_BG, borderwidth=0)
-        self.style.map('TNotebook.Tab', background=[('selected', COLOR_BG)], foreground=[('selected', COLOR_PRIMARY)])
-
-        # --- ADB Setup ---
+        self.style.configure('Tab.TButton', font=('Segoe UI', 10, 'bold'), padding=[15, 8], background=COLOR_WINDOW_BG, borderwidth=0, relief='flat')
+        self.style.map('Tab.TButton', foreground=[('!selected', COLOR_DARK_TEXT), ('selected', COLOR_PRIMARY)], background=[('!selected', COLOR_WINDOW_BG)])
+        
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("Error", "ADB not found.")
@@ -104,10 +99,7 @@ class App:
         self.start_adb_server()
         self.connected_device = None
 
-        # --- UI Creation ---
         self.create_widgets()
-
-        # --- Initial Load & Monitoring ---
         self.refresh_devices()
         self.update_tray_status()
         
@@ -120,37 +112,40 @@ class App:
         import tkinter as tk
         from tkinter import ttk, scrolledtext
 
-        # Main frame with padding to create space around the card
         padded_frame = tk.Frame(self.master, background='#F0F2F5', padx=20, pady=20)
         padded_frame.pack(fill=tk.BOTH, expand=True)
 
         header_label = ttk.Label(padded_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 10), padx=10)
         
-        # --- Create Notebook for Tabs ---
-        self.notebook = ttk.Notebook(padded_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
-        
-        # --- Tab 1: Device Status ---
-        device_tab = ttk.Frame(self.notebook, style='TFrame', padding=20)
-        self.notebook.add(device_tab, text='Device Status')
-        
-        buttons_frame = ttk.Frame(device_tab, padding=(0, 20, 0, 0))
-        buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        # --- Custom Tab Buttons ---
+        tab_frame = ttk.Frame(padded_frame, style='TFrame', background=self.style.lookup('TFrame', 'background'))
+        tab_frame.pack(fill=tk.X, padx=10)
 
+        self.device_tab_button = ttk.Button(tab_frame, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
+        self.device_tab_button.pack(side=tk.LEFT)
+        self.api_tab_button = ttk.Button(tab_frame, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
+        self.api_tab_button.pack(side=tk.LEFT)
+
+        # --- Content Frames ---
+        self.content_frame = ttk.Frame(padded_frame, style='Card.TFrame')
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        
+        self.device_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
+        self.api_frame = ttk.Frame(self.content_frame, style='TFrame', padding=20)
+        
+        # --- Tab 1: Device Status Content ---
+        buttons_frame = ttk.Frame(self.device_frame, padding=(0, 20, 0, 0))
+        buttons_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.refresh_button = ttk.Button(buttons_frame, text="Refresh Devices", command=self.refresh_devices, style='Secondary.TButton')
         self.refresh_button.pack(side=tk.LEFT, padx=(0, 10))
-
         self.connect_button = ttk.Button(buttons_frame, text="Connect Selected", command=self.connect_device, style='Primary.TButton')
         self.connect_button.pack(side=tk.LEFT, padx=(0, 10))
-
         self.disconnect_button = ttk.Button(buttons_frame, text="Disconnect", command=self.disconnect_device, style='Secondary.TButton')
         self.disconnect_button.pack(side=tk.LEFT)
         self.disconnect_button.config(state='disabled')
-
-        tree_frame = ttk.Frame(device_tab, padding=(0, 10, 0, 0))
+        tree_frame = ttk.Frame(self.device_frame, padding=(0, 10, 0, 0))
         tree_frame.pack(fill=tk.BOTH, expand=True)
-
         self.device_tree = ttk.Treeview(tree_frame, columns=('device_id', 'status'), show='headings')
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
@@ -160,30 +155,45 @@ class App:
         self.device_tree.tag_configure('connected', foreground="#20C997", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
         
-        # --- Tab 2: API Log ---
-        api_tab = ttk.Frame(self.notebook, style='TFrame', padding=20)
-        self.notebook.add(api_tab, text='API Log')
-        
-        search_frame = ttk.Frame(api_tab, style='TFrame', padding=(0, 0, 0, 10))
+        # --- Tab 2: API Log Content ---
+        api_status_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
+        api_status_frame.pack(fill=tk.X)
+        self.api_status_dot = tk.Canvas(api_status_frame, width=10, height=10, bg='red', highlightthickness=0)
+        self.api_status_dot.pack(side=tk.LEFT, padx=(0, 5))
+        self.api_status_label = ttk.Label(api_status_frame, text="API Status: Offline", font=('Segoe UI', 10, 'bold'), foreground='red')
+        self.api_status_label.pack(side=tk.LEFT)
+
+        search_frame = ttk.Frame(self.api_frame, style='TFrame', padding=(0, 0, 0, 10))
         search_frame.pack(fill=tk.X)
-        
         self.search_entry = ttk.Entry(search_frame, font=('Segoe UI', 10))
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
         search_button = ttk.Button(search_frame, text="Search", command=self.search_api_logs, style='Secondary.TButton')
         search_button.pack(side=tk.LEFT)
-
-        self.api_log_text = scrolledtext.ScrolledText(api_tab, wrap=tk.WORD, state='disabled', bg='#1E1E1E', fg='#D4D4D4', font=('Consolas', 10), relief='flat', borderwidth=0)
+        self.api_log_text = scrolledtext.ScrolledText(self.api_frame, wrap=tk.WORD, state='disabled', bg='#2B2B2B', fg='#A9B7C6', font=('Consolas', 10), relief='flat', borderwidth=0)
         self.api_log_text.pack(fill=tk.BOTH, expand=True)
         self.api_log_text.tag_config('search', background='yellow', foreground='black')
-        self.api_log_text.tag_config('current_search', background='#FFA500', foreground='black') # For the current find
+        self.api_log_text.tag_config('current_search', background='#FFA500', foreground='black')
+        
+        self.switch_tab('device') # Show device tab by default
+
+    def switch_tab(self, tab_name):
+        self.device_frame.pack_forget()
+        self.api_frame.pack_forget()
+        self.device_tab_button.state(['!selected'])
+        self.api_tab_button.state(['!selected'])
+
+        if tab_name == 'device':
+            self.device_frame.pack(fill='both', expand=True)
+            self.device_tab_button.state(['selected'])
+        else:
+            self.api_frame.pack(fill='both', expand=True)
+            self.api_tab_button.state(['selected'])
 
     def search_api_logs(self):
         import tkinter as tk
         search_term = self.search_entry.get()
         self.api_log_text.config(state='normal')
         
-        # If the search term is new, reset the search position and highlights
         if search_term != self.last_search_term:
             self.last_search_term = search_term
             self.last_search_pos = "1.0"
@@ -191,27 +201,19 @@ class App:
             self.api_log_text.tag_remove('current_search', '1.0', tk.END)
 
         if search_term:
-            # Find the next occurrence from the last position
             start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
             
-            # If not found, loop back to the beginning
             if not start_pos:
                 self.last_search_pos = "1.0"
-                self.api_log_text.tag_remove('current_search', '1.0', tk.END) # Clear previous current highlight
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
                 start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
 
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
-                
-                # Highlight all matches in yellow, but the current one in orange
                 self.api_log_text.tag_add('search', start_pos, end_pos)
                 self.api_log_text.tag_remove('current_search', '1.0', tk.END)
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
-                
-                # Scroll to the found text
                 self.api_log_text.see(start_pos)
-                
-                # Update the last position for the next search
                 self.last_search_pos = end_pos
         
         self.api_log_text.config(state='disabled')
@@ -225,19 +227,9 @@ class App:
             return
 
         try:
-            self.api_process = subprocess.Popen(
-                [api_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                encoding='utf-8',
-                errors='replace'
-            )
-            
+            self.api_process = subprocess.Popen([api_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW, encoding='utf-8', errors='replace')
             threading.Thread(target=self.read_api_output, daemon=True).start()
             self.master.after(100, self.process_api_log_queue)
-            
         except Exception as e:
             self.log_to_api_tab(f"Failed to start api.exe: {e}")
 
@@ -264,6 +256,18 @@ class App:
         self.api_log_text.insert(tk.END, message)
         self.api_log_text.see(tk.END)
         self.api_log_text.config(state='disabled')
+        if "fiber" in message.lower() and self.api_status != "Online":
+            self.set_api_status("Online")
+
+    def set_api_status(self, status):
+        self.api_status = status
+        if status == "Online":
+            self.api_status_dot.config(bg='green')
+            self.api_status_label.config(text="API Status: Online", foreground='green')
+        else:
+            self.api_status_dot.config(bg='red')
+            self.api_status_label.config(text="API Status: Offline", foreground='red')
+        self.update_tray_status()
 
     def hide_window(self):
         self.master.withdraw()
@@ -275,12 +279,28 @@ class App:
 
     def update_tray_status(self):
         if not self.tray_icon: return
+        device_status = f"Device: {self.connected_device or 'Disconnected'}"
+        api_status = f"API: {self.api_status}"
+        
+        # pystray menu needs to be rebuilt to update text
+        self.tray_icon.menu = self.create_tray_menu(device_status, api_status)
+        
         if self.connected_device:
             self.tray_icon.icon = create_android_icon('green')
-            self.tray_icon.title = f"HHT Android Connect: Connected to {self.connected_device}"
+            self.tray_icon.title = f"HHT Android Connect: Connected"
         else:
             self.tray_icon.icon = create_android_icon('grey')
             self.tray_icon.title = "HHT Android Connect: Disconnected"
+
+    def create_tray_menu(self, device_status, api_status):
+        import pystray
+        return pystray.Menu(
+            pystray.MenuItem('Show', self.show_window, default=True),
+            pystray.MenuItem(device_status, None, enabled=False),
+            pystray.MenuItem(api_status, None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Quit', self.on_app_quit)
+        )
 
     def device_monitor_loop(self):
         from tkinter import messagebox
@@ -455,13 +475,14 @@ if __name__ == "__main__":
 
     app.icon_image.save('app_icon.ico')
 
-    def quit_app(icon, item):
-        app.on_app_quit()
-
+    # The quit_app function is now defined inside on_app_quit
+    # to be passed to the menu item.
+    
     root.protocol('WM_DELETE_WINDOW', app.hide_window)
-
-    menu = (pystray.MenuItem('Show', app.show_window, default=True), pystray.MenuItem('Quit', quit_app))
-    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", menu)
+    
+    # Create initial menu
+    initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
+    icon = pystray.Icon("HHTAndroidConnect", create_android_icon('grey'), "HHT Android Connect", initial_menu)
     
     app.tray_icon = icon
 
