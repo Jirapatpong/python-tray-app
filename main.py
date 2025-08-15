@@ -9,7 +9,6 @@ import queue
 # --- System Tray Icon Creation ---
 def create_android_icon(color):
     """Generates a simple Android robot icon."""
-    # This function requires Pillow, which will be imported later.
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -29,7 +28,6 @@ def create_android_icon(color):
 
 class App:
     def __init__(self, master):
-        # Import GUI libraries here, inside the class context
         import tkinter as tk
         from tkinter import ttk, messagebox, scrolledtext
         from PIL import ImageTk
@@ -38,12 +36,11 @@ class App:
         self.tray_icon = None 
         self.is_running = True
         self.is_disconnecting = False
-        self.api_process = None # To hold the api.exe subprocess
+        self.api_process = None 
         
         master.title("HHT Android Connect")
         
-        # --- Window Size and Position ---
-        app_width = 750 # Increased width for tabs
+        app_width = 750
         app_height = 550
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
@@ -59,7 +56,6 @@ class App:
         
         master.resizable(False, False)
 
-        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
@@ -84,7 +80,6 @@ class App:
         self.style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[10, 5])
         self.style.configure('TNotebook', background=COLOR_WHITE)
 
-        # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("Error", "ADB not found.")
@@ -93,17 +88,14 @@ class App:
         self.start_adb_server()
         self.connected_device = None
 
-        # --- UI Creation ---
         self.create_widgets()
 
-        # --- Initial Load & Monitoring ---
         self.refresh_devices()
         self.update_tray_status()
         
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         
-        # --- Start api.exe ---
         self.start_api_exe()
 
     def create_widgets(self):
@@ -119,11 +111,9 @@ class App:
         header_label = ttk.Label(main_frame, text="HHT Android Connect", style='Header.TLabel')
         header_label.pack(anchor='w', pady=(0, 20))
         
-        # --- Create Notebook for Tabs ---
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True)
         
-        # --- Tab 1: Device Status ---
         device_tab = ttk.Frame(self.notebook, style='TFrame')
         self.notebook.add(device_tab, text='Device Status')
         
@@ -152,15 +142,12 @@ class App:
         self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
         
-        # --- Tab 2: API Log ---
         api_tab = ttk.Frame(self.notebook, style='TFrame')
         self.notebook.add(api_tab, text='API Log')
         
         self.api_log_text = scrolledtext.ScrolledText(api_tab, wrap=tk.WORD, state='disabled', bg='#1E1E1E', fg='#D4D4D4', font=('Consolas', 10))
         self.api_log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-
-    # --- API.EXE Integration ---
     def start_api_exe(self):
         self.api_log_queue = queue.Queue()
         api_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "api.exe")
@@ -169,58 +156,47 @@ class App:
             self.log_to_api_tab("Error: api.exe not found in the application directory.")
             return
 
-        try
-            # Start the process without a console window
+        try:  # <-- FIXED HERE
             self.api_process = subprocess.Popen(
                 [api_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
-                encoding='utf-8', # Specify encoding to prevent errors
+                encoding='utf-8',
                 errors='replace'
             )
             
-            # Thread to read the output
             threading.Thread(target=self.read_api_output, daemon=True).start()
-            
-            # Start checking the queue for new messages
             self.master.after(100, self.process_api_log_queue)
             
         except Exception as e:
             self.log_to_api_tab(f"Failed to start api.exe: {e}")
 
     def read_api_output(self):
-        """Reads output from api.exe line by line and puts it in a queue."""
-        # This will block until the process terminates or the pipe closes
         for line in iter(self.api_process.stdout.readline, ''):
             self.api_log_queue.put(line)
         self.api_process.stdout.close()
 
     def process_api_log_queue(self):
-        """Checks the queue and updates the text widget in the main thread."""
-        import tkinter as tk # Need tk for END constant
+        import tkinter as tk
         try:
             while True:
                 line = self.api_log_queue.get_nowait()
                 self.log_to_api_tab(line)
         except queue.Empty:
-            pass # No new messages
+            pass
         finally:
-            # Keep checking the queue periodically
             if self.is_running:
                 self.master.after(100, self.process_api_log_queue)
 
     def log_to_api_tab(self, message):
-        """Appends a message to the API log text widget."""
-        import tkinter as tk # Need tk for END constant
+        import tkinter as tk
         self.api_log_text.config(state='normal')
         self.api_log_text.insert(tk.END, message)
-        self.api_log_text.see(tk.END) # Auto-scroll
+        self.api_log_text.see(tk.END)
         self.api_log_text.config(state='disabled')
 
-
-    # --- System Tray Helper Methods ---
     def hide_window(self):
         self.master.withdraw()
 
@@ -238,9 +214,7 @@ class App:
             self.tray_icon.icon = create_android_icon('grey')
             self.tray_icon.title = "HHT Android Connect: Disconnected"
 
-    # --- Background Monitoring ---
     def device_monitor_loop(self):
-        """Periodically checks for device connection changes."""
         from tkinter import messagebox
         while self.is_running:
             if self.connected_device and not self.is_disconnecting:
@@ -254,7 +228,6 @@ class App:
             time.sleep(2)
 
     def handle_auto_disconnect(self):
-        """Handles UI updates when a device is physically disconnected."""
         from tkinter import messagebox
         if self.connected_device:
             messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
@@ -264,7 +237,6 @@ class App:
         self.update_tray_status()
         self.is_disconnecting = False
 
-    # --- Original Logic ---
     def _refresh_devices(self):
         import tkinter as tk
         from tkinter import messagebox
@@ -389,18 +361,15 @@ class App:
         threading.Thread(target=self._disconnect_device).start()
     
     def on_app_quit(self):
-        """Handles cleanup when the application is fully closed."""
         self.is_running = False
         if self.tray_icon:
             self.tray_icon.stop()
         
-        # Terminate api.exe
         if self.api_process:
             self.api_process.terminate()
             
         if self.connected_device:
             try:
-                # FIX: Moved the subprocess call inside the try block
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e:
@@ -409,8 +378,6 @@ class App:
 
 
 if __name__ == "__main__":
-    # --- Main execution block ---
-    # Import GUI libraries here to prevent errors in headless environments
     import tkinter as tk
     from PIL import Image
     import pystray
@@ -433,4 +400,3 @@ if __name__ == "__main__":
     threading.Thread(target=icon.run, daemon=True).start()
 
     root.mainloop()
-
