@@ -37,8 +37,8 @@ class App:
         master.title("HHT Android Connect")
         
         # --- Window Size and Position ---
-        app_width = 600 # 20% thinner than 750
-        app_height = 550
+        app_width = 480 # 20% thinner than 600
+        app_height = 440 # 20% shorter than 550
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 40 # Position at bottom right with margin
@@ -48,8 +48,8 @@ class App:
         master.configure(background='#F0F2F5')
         
         # Set the window icon
-        icon_image = create_android_icon('grey')
-        icon_photo = ImageTk.PhotoImage(icon_image)
+        self.icon_image = create_android_icon('grey')
+        icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
         
         master.resizable(False, False)
@@ -132,8 +132,8 @@ class App:
         
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=250) # Adjusted width for thinner window
-        self.device_tree.column('status', anchor='w', width=120)
+        self.device_tree.column('device_id', anchor='w', width=200) # Adjusted width for thinner window
+        self.device_tree.column('status', anchor='w', width=100)
         self.device_tree.pack(fill=tk.BOTH, expand=True)
         self.device_tree.tag_configure('connected', foreground="#198754", font=('Segoe UI', 10, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground="#DC3545", font=('Segoe UI', 10, 'bold'))
@@ -316,6 +316,9 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
 
+    # --- Save the icon to a file to be used by PyInstaller ---
+    app.icon_image.save('app_icon.ico')
+
     def quit_app(icon, item):
         app.on_app_quit()
 
@@ -329,4 +332,3 @@ if __name__ == "__main__":
     threading.Thread(target=icon.run, daemon=True).start()
 
     root.mainloop()
-
