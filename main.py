@@ -12,15 +12,11 @@ def create_android_icon(color):
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    # Head
     draw.arc((12, 10, 52, 50), 180, 0, fill=color, width=8)
-    # Eyes
     draw.ellipse((22, 24, 28, 30), fill='white')
     draw.ellipse((36, 24, 42, 30), fill='white')
-    # Antennae
     draw.line((20, 12, 16, 6), fill=color, width=3)
     draw.line((44, 12, 48, 6), fill=color, width=3)
-    # Body
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
@@ -41,18 +37,15 @@ class App:
 
         master.title("HHT Android Connect")
 
-        # --- Window Sizing and Positioning (Bottom-Right) ---
         app_width = 560
         app_height = 360
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
-        # Position window in the bottom-right corner with some padding
         x_pos = screen_width - app_width - 20
-        y_pos = screen_height - app_height - 80 # 80px buffer for taskbar
+        y_pos = screen_height - app_height - 80
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
         master.resizable(False, False)
 
-        # --- Color Palette ---
         self.COLOR_BG = "#E0E5EC"
         self.COLOR_SHADOW_LIGHT = "#FFFFFF"
         self.COLOR_SHADOW_DARK = "#A3B1C6"
@@ -61,7 +54,7 @@ class App:
         self.COLOR_SUCCESS = "#2EC574"
         self.COLOR_DANGER = "#FF4757"
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
-        self.COLOR_3D_BG_INACTIVE = "#C8D0DA" # Lighter grey for inactive tabs
+        self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
 
         master.configure(background=self.COLOR_BG)
 
@@ -69,7 +62,6 @@ class App:
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
 
-        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
         self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
@@ -85,18 +77,15 @@ class App:
         self.style.map('Treeview.Heading', background=[('active', self.COLOR_BG)])
         self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
         
-        # --- Style for 3D Tabs (Updated) ---
         self.style.configure('Tab.TButton', font=('Segoe UI', 10, 'bold'), padding=(15, 5), relief='raised', borderwidth=2)
         self.style.map('Tab.TButton',
                        background=[('selected', self.COLOR_3D_BG_ACTIVE), ('!selected', self.COLOR_3D_BG_INACTIVE)],
                        foreground=[('selected', 'white'), ('!selected', self.COLOR_TEXT)])
 
-        # --- Style for 3D Buttons ---
         self.style.configure('Raised.TButton', font=('Segoe UI', 9, 'bold'), padding=(10, 5), relief='raised',
                              background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
-        # --- ADB Setup ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -173,8 +162,14 @@ class App:
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
         search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
+        
+        # --- NEW: Save Log Button ---
+        save_log_button = ttk.Button(api_header_frame, text="Save Log", style='Raised.TButton', command=self.save_api_log)
+        save_log_button.grid(row=0, column=4, sticky='e', padx=(0, 5))
+        
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
-        self.refresh_api_button.grid(row=0, column=4, sticky='e')
+        self.refresh_api_button.grid(row=0, column=5, sticky='e')
+
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
         self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 8), relief='flat', bd=2, highlightthickness=0)
@@ -182,6 +177,67 @@ class App:
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
         self.switch_tab('device')
+
+    # --- NEW: Method to save the formatted API log ---
+    def save_api_log(self):
+        from tkinter import messagebox
+        try:
+            # 1. Get raw log content
+            raw_log_content = self.api_log_text.get("1.0", "end-1c")
+
+            if not raw_log_content.strip():
+                messagebox.showinfo("Log Empty", "The API log is empty. Nothing to save.")
+                return
+
+            # 2. Get the base path of the application
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+            else:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+            
+            log_dir = os.path.join(base_path, "log")
+            os.makedirs(log_dir, exist_ok=True) # Create log directory if it doesn't exist
+
+            # 3. Create a unique filename with a timestamp
+            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"api_log_{timestamp}.txt"
+            filepath = os.path.join(log_dir, filename)
+
+            # 4. Format the log content
+            formatted_content = self._format_sql_log(raw_log_content)
+
+            # 5. Write the formatted content to the file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(formatted_content)
+            
+            messagebox.showinfo("Success", f"Log saved successfully to:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save log file.\n\nError: {e}")
+
+    # --- NEW: Helper method to format the log, focusing on SQL ---
+    def _format_sql_log(self, raw_content):
+        formatted_lines = []
+        # Keywords that should start on a new, indented line
+        sql_keywords = [
+            ' FROM ', ' WHERE ', ' INSERT INTO ', ' UPDATE ', ' SET ', ' VALUES ',
+            ' LEFT JOIN ', ' INNER JOIN ', ' GROUP BY ', ' ORDER BY ', ' DELETE FROM '
+        ]
+        
+        for line in raw_content.splitlines():
+            # Check if the line likely contains a query
+            if 'SELECT ' in line or 'INSERT INTO ' in line or 'UPDATE ' in line or 'DELETE FROM ' in line:
+                formatted_lines.append("--- SQL Query ---")
+                # Add line breaks and indentation for better readability
+                for keyword in sql_keywords:
+                    line = line.replace(keyword, f'\n  {keyword.strip()} ')
+                formatted_lines.append(line)
+                formatted_lines.append("-" * 17 + "\n")
+            else:
+                # Keep non-SQL lines as they are
+                formatted_lines.append(line)
+        
+        return "\n".join(formatted_lines)
 
     def create_neumorphic_button(self, parent, text, command, is_accent=False):
         import tkinter as tk
@@ -199,7 +255,6 @@ class App:
         import tkinter as tk
         from tkinter import ttk
         entry_frame = tk.Frame(parent, bg=self.COLOR_SHADOW_DARK, padx=2, pady=2)
-        # Increased width by 20% (15 -> 18)
         entry = ttk.Entry(entry_frame, font=('Segoe UI', 9), style='TEntry', width=18)
         entry.pack()
         return entry_frame
@@ -215,8 +270,6 @@ class App:
             self.device_frame.grid_remove()
             self.api_frame.grid()
             self.api_tab_btn.state(['selected'])
-
-    # --- NO CHANGES WERE MADE TO THE METHODS BELOW THIS LINE ---
 
     def set_api_status(self, status):
         self.api_status = status
