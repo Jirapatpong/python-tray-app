@@ -6,7 +6,7 @@ import time
 import queue
  
  # --- Image Generation for UI ---
- def create_android_icon(color):
+def create_android_icon(color):
      """Generates a simple Android robot icon."""
      from PIL import Image, ImageDraw
      image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
