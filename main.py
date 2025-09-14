@@ -1,9 +1,9 @@
 import subprocess
- import threading
- import os
- import sys
- import time
- import queue
+import threading
+import os
+import sys
+import time
+import queue
  
  # --- Image Generation for UI ---
  def create_android_icon(color):
