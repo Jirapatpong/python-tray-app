@@ -35,7 +35,11 @@ class App:
         self.last_search_pos = "1.0"
         self.api_status = "Offline"
         self.lock_file_path = lock_file_path
-        self.known_devices = set() # Set to track devices between scans
+        self.known_devices = set()
+
+        # --- New variables for the custom notification system ---
+        self.notification_window = None
+        self.notification_timer = None
 
         master.title("HHT Android Connect")
 
@@ -103,6 +107,50 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
+
+    # --- NEW: Custom non-blocking notification system ---
+    def show_notification(self, message, is_connected):
+        import tkinter as tk
+        # Cancel any pending auto-hide timer
+        if self.notification_timer:
+            self.master.after_cancel(self.notification_timer)
+
+        color = self.COLOR_SUCCESS if is_connected else self.COLOR_DANGER
+        
+        # If window exists, just update it
+        if self.notification_window and self.notification_window.winfo_exists():
+            label = self.notification_window.winfo_children()[0]
+            label.config(text=message, bg=color)
+            self.notification_window.config(bg=color)
+        # Otherwise, create a new window
+        else:
+            self.notification_window = tk.Toplevel(self.master)
+            win = self.notification_window
+            win.overrideredirect(True)  # No title bar or borders
+            win.attributes("-topmost", True)  # Keep on top
+            win.config(bg=color)
+            
+            label = tk.Label(win, text=message, fg="white", bg=color, font=('Segoe UI', 10), justify='left', padx=20, pady=10)
+            label.pack()
+
+            # Position window in bottom-right corner
+            win.update_idletasks()
+            width = win.winfo_width()
+            height = win.winfo_height()
+            screen_width = self.master.winfo_screenwidth()
+            screen_height = self.master.winfo_screenheight()
+            x = screen_width - width - 20
+            y = screen_height - height - 60 # Adjust vertical position to be above the taskbar
+            win.geometry(f'{width}x{height}+{x}+{y}')
+        
+        # Schedule the window to auto-hide
+        self.notification_timer = self.master.after(3000, self.hide_notification)
+
+    def hide_notification(self):
+        if self.notification_window and self.notification_window.winfo_exists():
+            self.notification_window.destroy()
+        self.notification_window = None
+        self.notification_timer = None
 
     def create_widgets(self):
         import tkinter as tk
@@ -403,22 +451,20 @@ class App:
             
             time.sleep(3)
 
-    # --- MODIFIED: The order of operations is changed to fix the pop-up blocking issue ---
+    # --- MODIFIED: This method now uses the non-blocking custom notification ---
     def handle_auto_disconnect(self):
         """Handles the auto-disconnection logic and notification."""
-        from tkinter import messagebox
-        
         device_id = self.connected_device
         if device_id:
-            # 1. Update the application state FIRST. This is crucial.
+            # 1. Update the application state FIRST.
             self.connected_device = None
             self.disconnect_button.config(state='disabled')
             self.refresh_devices()
             self.update_tray_status()
             self.is_disconnecting = False
             
-            # 2. Show the blocking pop-up LAST, after the state is correct.
-            messagebox.showinfo("Disconnected", f"Device {device_id} has been disconnected.")
+            # 2. Show the non-blocking notification LAST.
+            self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
         
     def _update_device_tree(self, all_known_devices):
         """Safely clears and repopulates the device tree view on the main thread."""
@@ -452,7 +498,7 @@ class App:
         finally:
             self.master.after(0, self.refresh_button.config, {'state': 'normal'})
 
-
+    # --- MODIFIED: This method now uses the non-blocking custom notification ---
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
@@ -465,7 +511,11 @@ class App:
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
                 self.is_disconnecting = False
-                self.master.after(0, lambda: messagebox.showinfo("Success", f"Automatically connected to device {device_id}"))
+                
+                # Use the new notification system
+                self.master.after(0, self.show_notification, f"Device Connected:\n{device_id}", True)
+
+                # Schedule other UI updates
                 self.master.after(0, self.disconnect_button.config, {'state': 'normal'})
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
@@ -484,11 +534,13 @@ class App:
             result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode == 0:
-                messagebox.showinfo("Success", f"Successfully disconnected from device {self.connected_device}")
+                device_id = self.connected_device
                 self.connected_device = None
                 self.disconnect_button.config(state='disabled')
                 self.refresh_devices()
                 self.update_tray_status()
+                # Use the new notification system for manual disconnects too
+                self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
             else:
                 messagebox.showerror("Error", f"Failed to disconnect:\n{result.stderr}")
         except Exception as e:
