@@ -34,7 +34,8 @@ class App:
         self.last_search_term = ""
         self.last_search_pos = "1.0"
         self.api_status = "Offline"
-        self.lock_file_path = lock_file_path # Store the lock file path
+        self.lock_file_path = lock_file_path
+        self.known_devices = set() # Set to track devices between scans
 
         master.title("HHT Android Connect")
 
@@ -197,7 +198,7 @@ class App:
             filename = f"api_log_{timestamp}.txt"
             filepath = os.path.join(log_dir, filename)
 
-            formatted_content = self._format_sql_log(raw_log_content)
+            formatted_content = self._format_sql_log(raw_content)
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(formatted_content)
@@ -374,18 +375,38 @@ class App:
             pystray.MenuItem('Quit', self.on_app_quit)
         )
 
+    # --- MODIFIED: This loop now handles auto-connect and auto-disconnect ---
     def device_monitor_loop(self):
-        from tkinter import messagebox
+        """Periodically checks for device changes and handles connections."""
         while self.is_running:
-            if self.connected_device and not self.is_disconnecting:
-                try:
-                    result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                    if self.connected_device not in result.stdout:
+            try:
+                result = subprocess.run([self.ADB_PATH, "devices"], 
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                        text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                current_devices = set(self.parse_device_list(result.stdout))
+
+                # 1. Handle Auto-Disconnection
+                if self.connected_device and self.connected_device not in current_devices:
+                    if not self.is_disconnecting:
                         self.is_disconnecting = True
                         self.master.after(0, self.handle_auto_disconnect)
-                except Exception as e:
-                    print(f"Error in monitor loop: {e}")
-            time.sleep(2)
+                
+                # 2. Handle Auto-Connection
+                if not self.connected_device:
+                    newly_connected = current_devices - self.known_devices
+                    if newly_connected:
+                        device_to_connect = newly_connected.pop()
+                        # Use a thread for the connection logic to not block the monitor
+                        threading.Thread(target=self._connect_device, args=(device_to_connect,)).start()
+                
+                # 3. Update the set of known devices for the next cycle
+                self.known_devices = current_devices
+
+            except Exception as e:
+                print(f"Error in device monitor loop: {e}")
+            
+            time.sleep(3) # Check for changes every 3 seconds
 
     def handle_auto_disconnect(self):
         from tkinter import messagebox
@@ -424,21 +445,30 @@ class App:
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
+            # Prevent trying to connect to the same device again if a race condition occurs
+            if self.connected_device is not None:
+                return
+
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            if result.returncode == 0:
+            
+            # Double-check another thread didn't connect while this was running
+            if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
                 self.is_disconnecting = False
-                messagebox.showinfo("Success", f"Successfully connected to device {device_id}")
-                self.disconnect_button.config(state='normal')
-                self.refresh_devices()
-                self.update_tray_status()
-            else:
-                messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}")
+                # Schedule UI updates on the main thread
+                self.master.after(0, lambda: messagebox.showinfo("Success", f"Automatically connected to device {device_id}"))
+                self.master.after(0, self.disconnect_button.config, {'state': 'normal'})
+                self.master.after(0, self.refresh_devices)
+                self.master.after(0, self.update_tray_status)
+            elif result.returncode != 0:
+                # Schedule error message on the main thread
+                self.master.after(0, lambda: messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}"))
+
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred during connection:\n{e}")
+            self.master.after(0, lambda: messagebox.showerror("Error", f"An error occurred during connection:\n{e}"))
         finally:
-            self.connect_button.config(state='normal')
+            self.master.after(0, self.connect_button.config, {'state': 'normal'})
 
     def _disconnect_device(self):
         from tkinter import messagebox
