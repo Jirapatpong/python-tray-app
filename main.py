@@ -375,7 +375,6 @@ class App:
             pystray.MenuItem('Quit', self.on_app_quit)
         )
 
-    # --- MODIFIED: This loop now handles auto-connect and auto-disconnect ---
     def device_monitor_loop(self):
         """Periodically checks for device changes and handles connections."""
         while self.is_running:
@@ -386,43 +385,58 @@ class App:
                 
                 current_devices = set(self.parse_device_list(result.stdout))
 
-                # 1. Handle Auto-Disconnection
                 if self.connected_device and self.connected_device not in current_devices:
                     if not self.is_disconnecting:
                         self.is_disconnecting = True
                         self.master.after(0, self.handle_auto_disconnect)
                 
-                # 2. Handle Auto-Connection
                 if not self.connected_device:
                     newly_connected = current_devices - self.known_devices
                     if newly_connected:
                         device_to_connect = newly_connected.pop()
-                        # Use a thread for the connection logic to not block the monitor
                         threading.Thread(target=self._connect_device, args=(device_to_connect,)).start()
                 
-                # 3. Update the set of known devices for the next cycle
                 self.known_devices = current_devices
 
             except Exception as e:
                 print(f"Error in device monitor loop: {e}")
             
-            time.sleep(3) # Check for changes every 3 seconds
+            time.sleep(3)
 
+    # --- MODIFIED: The order of operations is changed to fix the pop-up blocking issue ---
     def handle_auto_disconnect(self):
+        """Handles the auto-disconnection logic and notification."""
         from tkinter import messagebox
-        if self.connected_device:
-            messagebox.showinfo("Disconnected", f"Device {self.connected_device} has been disconnected.")
-        self.connected_device = None
-        self.disconnect_button.config(state='disabled')
-        self.refresh_devices()
-        self.update_tray_status()
-        self.is_disconnecting = False
-
-    def _refresh_devices(self):
+        
+        device_id = self.connected_device
+        if device_id:
+            # 1. Update the application state FIRST. This is crucial.
+            self.connected_device = None
+            self.disconnect_button.config(state='disabled')
+            self.refresh_devices()
+            self.update_tray_status()
+            self.is_disconnecting = False
+            
+            # 2. Show the blocking pop-up LAST, after the state is correct.
+            messagebox.showinfo("Disconnected", f"Device {device_id} has been disconnected.")
+        
+    def _update_device_tree(self, all_known_devices):
+        """Safely clears and repopulates the device tree view on the main thread."""
         import tkinter as tk
-        from tkinter import messagebox
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
+        
+        if all_known_devices:
+            for device_id in sorted(list(all_known_devices)):
+                status = "Connected" if device_id == self.connected_device else "Available"
+                tag = "connected" if status == "Connected" else "disconnected"
+                self.device_tree.insert('', tk.END, values=(device_id, status), tags=(tag,))
+        else:
+            self.device_tree.insert('', tk.END, values=('No devices found.', ''), tags=())
+
+    def _refresh_devices(self):
+        """Worker method to get device list from ADB in a background thread."""
+        from tkinter import messagebox
         try:
             result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             output = result.stdout
@@ -430,39 +444,32 @@ class App:
             all_known_devices = set(devices)
             if self.connected_device:
                 all_known_devices.add(self.connected_device)
-            if all_known_devices:
-                for device_id in sorted(list(all_known_devices)):
-                    status = "Connected" if device_id == self.connected_device else "Available"
-                    tag = "connected" if status == "Connected" else "disconnected"
-                    self.device_tree.insert('', tk.END, values=(device_id, status), tags=(tag,))
-            else:
-                self.device_tree.insert('', tk.END, values=('No devices found.', ''), tags=())
+            
+            self.master.after(0, self._update_device_tree, all_known_devices)
+
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred while refreshing devices:\n{e}")
+            self.master.after(0, lambda: messagebox.showerror("Error", f"An error occurred while refreshing devices:\n{e}"))
         finally:
-            self.refresh_button.config(state='normal')
+            self.master.after(0, self.refresh_button.config, {'state': 'normal'})
+
 
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
-            # Prevent trying to connect to the same device again if a race condition occurs
             if self.connected_device is not None:
                 return
 
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             
-            # Double-check another thread didn't connect while this was running
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
                 self.is_disconnecting = False
-                # Schedule UI updates on the main thread
                 self.master.after(0, lambda: messagebox.showinfo("Success", f"Automatically connected to device {device_id}"))
                 self.master.after(0, self.disconnect_button.config, {'state': 'normal'})
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
             elif result.returncode != 0:
-                # Schedule error message on the main thread
                 self.master.after(0, lambda: messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}"))
 
         except Exception as e:
