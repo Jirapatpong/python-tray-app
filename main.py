@@ -240,7 +240,7 @@ class App:
             filename = f"api_log_{timestamp}.txt"
             filepath = os.path.join(log_dir, filename)
 
-            formatted_content = self._format_sql_log(raw_content)
+            formatted_content = self._format_sql_log(raw_log_content)
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(formatted_content)
