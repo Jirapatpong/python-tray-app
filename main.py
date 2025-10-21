@@ -40,6 +40,9 @@ class App:
         # --- Variables for the custom notification system ---
         self.notification_window = None
         self.notification_timer = None
+        
+        # --- New variable for the auto-save log system ---
+        self.log_filepath = None
 
         master.title("HHT Android Connect")
 
@@ -107,6 +110,10 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
+        
+        # --- Setup auto-saving for the log file ---
+        self._setup_log_file()
+        self._periodic_log_save() # Start the periodic save loop
 
     def show_notification(self, message, is_connected):
         import tkinter as tk
@@ -206,10 +213,9 @@ class App:
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
         search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
-        save_log_button = ttk.Button(api_header_frame, text="Save Log", style='Raised.TButton', command=self.save_api_log)
-        save_log_button.grid(row=0, column=4, sticky='e', padx=(0, 5))
+        # --- REMOVED the manual Save Log button ---
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
-        self.refresh_api_button.grid(row=0, column=5, sticky='e')
+        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5)) # Adjusted grid column
 
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
@@ -219,15 +225,12 @@ class App:
         self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
         self.switch_tab('device')
 
-    def save_api_log(self):
-        from tkinter import messagebox
+    # --- REMOVED the manual save_api_log method ---
+
+    # --- NEW methods for auto-saving the log ---
+    def _setup_log_file(self):
+        """Creates the log directory and determines the filename for this session."""
         try:
-            raw_log_content = self.api_log_text.get("1.0", "end-1c")
-
-            if not raw_log_content.strip():
-                messagebox.showinfo("Log Empty", "The API log is empty. Nothing to save.")
-                return
-
             if getattr(sys, 'frozen', False):
                 base_path = os.path.dirname(sys.executable)
             else:
@@ -238,17 +241,30 @@ class App:
 
             timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"api_log_{timestamp}.txt"
-            filepath = os.path.join(log_dir, filename)
-
-            formatted_content = self._format_sql_log(raw_log_content)
-
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(formatted_content)
-            
-            messagebox.showinfo("Success", f"Log saved successfully to:\n{filepath}")
-
+            self.log_filepath = os.path.join(log_dir, filename)
+            print(f"Logging API output to: {self.log_filepath}")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save log file.\n\nError: {e}")
+            print(f"Error setting up log file: {e}")
+
+    def _auto_save_log(self):
+        """Saves the current content of the log widget to the session file."""
+        if not self.log_filepath:
+            return # Don't save if the file path wasn't set up
+        try:
+            content = self.api_log_text.get("1.0", "end-1c")
+            if content.strip(): # Only write if there's content
+                formatted_content = self._format_sql_log(content)
+                with open(self.log_filepath, 'w', encoding='utf-8') as f:
+                    f.write(formatted_content)
+        except Exception as e:
+            print(f"Error during auto-save: {e}")
+
+    def _periodic_log_save(self):
+        """Calls the auto-save method and reschedules itself."""
+        if self.is_running:
+            self._auto_save_log()
+            # Reschedule to run again after 30 seconds (30000 ms)
+            self.master.after(30000, self._periodic_log_save)
 
     def _format_sql_log(self, raw_content):
         formatted_lines = []
@@ -588,6 +604,7 @@ class App:
 
     def on_app_quit(self):
         self.is_running = False
+        self._auto_save_log() # Perform one final save on exit
         if self.tray_icon:
             self.tray_icon.stop()
         if self.api_process:
