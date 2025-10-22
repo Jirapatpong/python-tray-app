@@ -33,8 +33,13 @@ class ZipFileHandler(FileSystemEventHandler):
     def on_created(self, event):
         """Called when a file or directory is created."""
         if not event.is_directory and event.src_path.endswith('.zip'):
+            # --- FIX: Check if this file is already being processed ---
+            if event.src_path in self.app.processing_files:
+                print(f"Ignoring self-generated file event: {event.src_path}")
+                return
+            # --- END FIX ---
+                
             print(f"New zip file detected: {event.src_path}")
-            # Schedule adding the file to the UI monitor on the main thread
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
 class App:
@@ -54,20 +59,19 @@ class App:
         self.lock_file_path = lock_file_path
         self.known_devices = set()
 
-        # --- Variables for the custom notification system ---
         self.notification_window = None
         self.notification_timer = None
         
-        # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
         self.outbox_path = None
         self.file_observer = None
         
-        # --- NEW: Variables for the Zip Monitor UI ---
         self.zip_processed_count = 0
-        self.zip_file_map = {} # Maps filepath to Treeview item ID
+        self.zip_file_map = {}
         
-        # --- Base path for finding configs/logs ---
+        # --- NEW: Set to "lock" files being processed ---
+        self.processing_files = set()
+        
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -93,7 +97,7 @@ class App:
         self.COLOR_DANGER = "#FF4757"
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
-        self.COLOR_WARNING = "#F59E0B" # For "Processing" status
+        self.COLOR_WARNING = "#F59E0B"
 
         master.configure(background=self.COLOR_BG)
 
@@ -197,16 +201,13 @@ class App:
         tab_container = tk.Frame(self.master, bg=self.COLOR_BG)
         tab_container.grid(row=1, column=0, sticky='ew', padx=20)
         
-        # --- Tab Buttons ---
         self.device_tab_btn = ttk.Button(tab_container, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
         self.device_tab_btn.pack(side='left')
         self.api_tab_btn = ttk.Button(tab_container, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
         self.api_tab_btn.pack(side='left', padx=1)
-        # --- NEW: Zip Monitor Tab Button ---
         self.zip_tab_btn = ttk.Button(tab_container, text="Zip Monitor", style='Tab.TButton', command=lambda: self.switch_tab('zip'))
         self.zip_tab_btn.pack(side='left', padx=1)
         
-        # --- Content Frame Setup ---
         shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
         shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(22, 18), pady=(0, 18))
         shadow_light = tk.Frame(shadow_dark, bg=self.COLOR_SHADOW_LIGHT)
@@ -216,7 +217,6 @@ class App:
         self.content_frame.grid_rowconfigure(0, weight=1)
         self.content_frame.grid_columnconfigure(0, weight=1)
         
-        # --- Frame 1: Device Status ---
         self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.device_frame.grid(row=0, column=0, sticky='nsew')
         self.device_frame.grid_rowconfigure(0, weight=1)
@@ -239,7 +239,6 @@ class App:
         self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
 
-        # --- Frame 2: API Log ---
         self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.api_frame.grid(row=0, column=0, sticky='nsew')
         self.api_frame.grid_rowconfigure(1, weight=1)
@@ -264,7 +263,6 @@ class App:
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
 
-        # --- NEW: Frame 3: Zip Monitor ---
         self.zip_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.zip_frame.grid(row=0, column=0, sticky='nsew')
         self.zip_frame.grid_rowconfigure(1, weight=1)
@@ -284,7 +282,6 @@ class App:
         self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
 
-        # Start on the first tab
         self.switch_tab('device')
 
     def _setup_log_file(self):
@@ -354,7 +351,6 @@ class App:
         entry.pack()
         return entry_frame
 
-    # --- UPDATED: To handle the new 'zip' tab ---
     def switch_tab(self, tab_name):
         self.device_tab_btn.state(['!selected'])
         self.api_tab_btn.state(['!selected'])
@@ -691,22 +687,21 @@ class App:
             self.file_observer.start()
             print("File monitoring service started.")
 
-    # --- NEW: Zip Service Method: Add file to UI ---
+    # --- Zip Service Method: Add file to UI ---
     def _add_zip_to_monitor(self, filepath):
-        """Adds a new file to the Zip Monitor UI and starts processing."""
         import tkinter as tk
         filename = os.path.basename(filepath)
         
-        # Add to Treeview and get its unique item ID
+        # --- FIX: Add to processing lock ---
+        self.processing_files.add(filepath)
+        
         item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
+        self.zip_file_map[filepath] = item_id # Map path to item ID
         
-        # Store the item ID for later updates
-        self.zip_file_map[filepath] = item_id
-        
-        # Start the processing in a background thread
-        threading.Thread(target=self.process_zip_file, args=(filepath, item_id), daemon=True).start()
+        # Pass only the path to the thread
+        threading.Thread(target=self.process_zip_file, args=(filepath,), daemon=True).start()
 
-    # --- NEW: Zip Service Method: Update file status in UI ---
+    # --- Zip Service Method: Update file status in UI ---
     def _update_zip_status(self, item_id, status):
         """Updates the status of a file in the Zip Monitor UI."""
         try:
@@ -720,16 +715,26 @@ class App:
             elif status == "Error":
                 self.zip_tree.item(item_id, values=(filename, 'Error'), tags=('error',))
         except Exception as e:
-            print(f"Error updating zip status in UI: {e}") # Item might not exist if app is closing
+            print(f"Error updating zip status in UI: {e}")
+
+    # --- NEW: Helper to remove file from processing list ---
+    def _remove_from_processing_list(self, filepath):
+        """Removes a file from the processing set once done/failed."""
+        if filepath in self.processing_files:
+            self.processing_files.remove(filepath)
 
     # --- Zip Service Method: Core re-zip logic ---
-    def process_zip_file(self, zip_path, item_id):
+    def process_zip_file(self, zip_path):
         """Unzips and re-zips a file to trigger file-based import."""
         
-        # Update UI to "Processing"
+        # Get the UI item ID from the map
+        item_id = self.zip_file_map.get(zip_path)
+        if not item_id:
+            print(f"Error: Could not find item_id for {zip_path}")
+            return
+
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        # Wait for the file to be fully copied
         for _ in range(5):
             try:
                 with open(zip_path, 'rb') as f:
@@ -739,27 +744,26 @@ class App:
                 time.sleep(1)
             except FileNotFoundError:
                 print(f"File {zip_path} disappeared, aborting.")
+                self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
                 return
         else:
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_zip_status, item_id, "Error")
+            self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
             return
 
         temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
         original_filename = os.path.basename(zip_path)
         
         try:
-            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
             print(f"Unzipped '{original_filename}'")
 
-            # 2. Delete original
             os.remove(zip_path)
             print(f"Removed original: {zip_path}")
 
-            # 3. Re-zip
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, _, files in os.walk(temp_extract_dir):
                     for file in files:
@@ -774,9 +778,10 @@ class App:
             self.master.after(0, self._update_zip_status, item_id, "Error")
         
         finally:
-            # 4. Clean up
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
+            # --- FIX: Remove from processing lock on the main thread ---
+            self.master.after(0, self._remove_from_processing_list, zip_path)
 
     # --- App Quit Method ---
     def on_app_quit(self):
