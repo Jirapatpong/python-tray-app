@@ -5,11 +5,11 @@ import os
 import sys
 import time
 import queue
-import zipfile  # New: For handling zip files
-import shutil   # New: For deleting temporary folders
-import yaml     # New: For reading the config.yml
-from watchdog.observers import Observer          # New: For monitoring the folder
-from watchdog.events import FileSystemEventHandler # New: For handling file events
+import zipfile
+import shutil
+import yaml
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -25,7 +25,7 @@ def create_android_icon(color):
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
-# --- New: Handler for the file monitoring service ---
+# --- Handler for the file monitoring service ---
 class ZipFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
@@ -34,8 +34,8 @@ class ZipFileHandler(FileSystemEventHandler):
         """Called when a file or directory is created."""
         if not event.is_directory and event.src_path.endswith('.zip'):
             print(f"New zip file detected: {event.src_path}")
-            # Run the processing in a new thread to avoid blocking
-            threading.Thread(target=self.app.process_zip_file, args=(event.src_path,), daemon=True).start()
+            # Schedule adding the file to the UI monitor on the main thread
+            self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
 class App:
     def __init__(self, master, lock_file_path):
@@ -58,10 +58,14 @@ class App:
         self.notification_window = None
         self.notification_timer = None
         
-        # --- New variables for auto-save log & file monitoring ---
+        # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
         self.outbox_path = None
         self.file_observer = None
+        
+        # --- NEW: Variables for the Zip Monitor UI ---
+        self.zip_processed_count = 0
+        self.zip_file_map = {} # Maps filepath to Treeview item ID
         
         # --- Base path for finding configs/logs ---
         if getattr(sys, 'frozen', False):
@@ -89,6 +93,7 @@ class App:
         self.COLOR_DANGER = "#FF4757"
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
+        self.COLOR_WARNING = "#F59E0B" # For "Processing" status
 
         master.configure(background=self.COLOR_BG)
 
@@ -136,11 +141,9 @@ class App:
         self.monitor_thread.start()
         self.start_api_exe()
         
-        # --- Setup auto-saving for the log file ---
         self._setup_log_file()
         self._periodic_log_save()
         
-        # --- NEW: Start the re-zip file monitoring service ---
         self._start_file_monitoring_service()
 
     def show_notification(self, message, is_connected):
@@ -193,10 +196,17 @@ class App:
         header_label.pack(side='left')
         tab_container = tk.Frame(self.master, bg=self.COLOR_BG)
         tab_container.grid(row=1, column=0, sticky='ew', padx=20)
+        
+        # --- Tab Buttons ---
         self.device_tab_btn = ttk.Button(tab_container, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
         self.device_tab_btn.pack(side='left')
         self.api_tab_btn = ttk.Button(tab_container, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
         self.api_tab_btn.pack(side='left', padx=1)
+        # --- NEW: Zip Monitor Tab Button ---
+        self.zip_tab_btn = ttk.Button(tab_container, text="Zip Monitor", style='Tab.TButton', command=lambda: self.switch_tab('zip'))
+        self.zip_tab_btn.pack(side='left', padx=1)
+        
+        # --- Content Frame Setup ---
         shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
         shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(22, 18), pady=(0, 18))
         shadow_light = tk.Frame(shadow_dark, bg=self.COLOR_SHADOW_LIGHT)
@@ -205,10 +215,10 @@ class App:
         self.content_frame.pack(fill='both', expand=True, padx=(0, 2), pady=(0, 2))
         self.content_frame.grid_rowconfigure(0, weight=1)
         self.content_frame.grid_columnconfigure(0, weight=1)
+        
+        # --- Frame 1: Device Status ---
         self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.device_frame.grid(row=0, column=0, sticky='nsew')
-        self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
-        self.api_frame.grid(row=0, column=0, sticky='nsew')
         self.device_frame.grid_rowconfigure(0, weight=1)
         self.device_frame.grid_columnconfigure(0, weight=1)
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
@@ -228,6 +238,10 @@ class App:
         self.disconnect_button.config(state='disabled')
         self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
+
+        # --- Frame 2: API Log ---
+        self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.api_frame.grid(row=0, column=0, sticky='nsew')
         self.api_frame.grid_rowconfigure(1, weight=1)
         self.api_frame.grid_columnconfigure(0, weight=1)
         api_header_frame = tk.Frame(self.api_frame, bg=self.COLOR_BG)
@@ -243,17 +257,37 @@ class App:
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
         self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5))
-
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
         self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 8), relief='flat', bd=2, highlightthickness=0)
         self.api_log_text.pack(fill='both', expand=True, padx=2, pady=2)
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
-        self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
+        self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
+
+        # --- NEW: Frame 3: Zip Monitor ---
+        self.zip_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.zip_frame.grid(row=0, column=0, sticky='nsew')
+        self.zip_frame.grid_rowconfigure(1, weight=1)
+        self.zip_frame.grid_columnconfigure(0, weight=1)
+        zip_header_frame = tk.Frame(self.zip_frame, bg=self.COLOR_BG)
+        zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
+        self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.zip_count_label.pack(side='left')
+        self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
+        self.zip_tree.heading('filename', text='FILENAME', anchor='w')
+        self.zip_tree.heading('status', text='STATUS', anchor='w')
+        self.zip_tree.column('filename', anchor='w', width=350)
+        self.zip_tree.column('status', anchor='w', width=100)
+        self.zip_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
+        self.zip_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
+        self.zip_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
+        self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
+        self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
+
+        # Start on the first tab
         self.switch_tab('device')
 
     def _setup_log_file(self):
-        """Creates the log directory and determines the filename for this session."""
         try:
             log_dir = os.path.join(self.base_path, "log")
             os.makedirs(log_dir, exist_ok=True)
@@ -265,7 +299,6 @@ class App:
             print(f"Error setting up log file: {e}")
 
     def _auto_save_log(self):
-        """Saves the current content of the log widget to the session file."""
         if not self.log_filepath:
             return
         try:
@@ -278,7 +311,6 @@ class App:
             print(f"Error during auto-save: {e}")
 
     def _periodic_log_save(self):
-        """Calls the auto-save method and reschedules itself."""
         if self.is_running:
             self._auto_save_log()
             self.master.after(30000, self._periodic_log_save)
@@ -322,17 +354,25 @@ class App:
         entry.pack()
         return entry_frame
 
+    # --- UPDATED: To handle the new 'zip' tab ---
     def switch_tab(self, tab_name):
         self.device_tab_btn.state(['!selected'])
         self.api_tab_btn.state(['!selected'])
+        self.zip_tab_btn.state(['!selected'])
+        
+        self.device_frame.grid_remove()
+        self.api_frame.grid_remove()
+        self.zip_frame.grid_remove()
+        
         if tab_name == 'device':
-            self.api_frame.grid_remove()
             self.device_frame.grid()
             self.device_tab_btn.state(['selected'])
-        else:
-            self.device_frame.grid_remove()
+        elif tab_name == 'api':
             self.api_frame.grid()
             self.api_tab_btn.state(['selected'])
+        elif tab_name == 'zip':
+            self.zip_frame.grid()
+            self.zip_tab_btn.state(['selected'])
 
     def set_api_status(self, status):
         self.api_status = status
@@ -362,7 +402,7 @@ class App:
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
                 self.api_log_text.tag_add('search', start_pos, end_pos)
-                self.api_log_text.tag_remove('current_search', '1.S0', tk.END)
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
@@ -619,9 +659,8 @@ class App:
             return
         threading.Thread(target=self._disconnect_device).start()
 
-    # --- NEW: Method to load config and start file monitoring ---
+    # --- Zip Service Method: Load config ---
     def _load_config_path(self):
-        """Loads the Outbox path from the config.yml file."""
         config_path = os.path.join(self.base_path, "configs", "config.yml")
         try:
             with open(config_path, 'r') as f:
@@ -643,8 +682,8 @@ class App:
             print(f"Error loading config file: {e}")
         return False
 
+    # --- Zip Service Method: Start monitoring ---
     def _start_file_monitoring_service(self):
-        """Initializes and starts the watchdog file observer."""
         if self._load_config_path():
             event_handler = ZipFileHandler(self)
             self.file_observer = Observer()
@@ -652,63 +691,98 @@ class App:
             self.file_observer.start()
             print("File monitoring service started.")
 
-    # --- NEW: Core logic for the re-zipping service ---
-    def process_zip_file(self, zip_path):
+    # --- NEW: Zip Service Method: Add file to UI ---
+    def _add_zip_to_monitor(self, filepath):
+        """Adds a new file to the Zip Monitor UI and starts processing."""
+        import tkinter as tk
+        filename = os.path.basename(filepath)
+        
+        # Add to Treeview and get its unique item ID
+        item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
+        
+        # Store the item ID for later updates
+        self.zip_file_map[filepath] = item_id
+        
+        # Start the processing in a background thread
+        threading.Thread(target=self.process_zip_file, args=(filepath, item_id), daemon=True).start()
+
+    # --- NEW: Zip Service Method: Update file status in UI ---
+    def _update_zip_status(self, item_id, status):
+        """Updates the status of a file in the Zip Monitor UI."""
+        try:
+            filename = self.zip_tree.item(item_id, 'values')[0]
+            if status == "Processing":
+                self.zip_tree.item(item_id, values=(filename, 'Processing'), tags=('processing',))
+            elif status == "Done":
+                self.zip_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
+                self.zip_processed_count += 1
+                self.zip_count_label.config(text=f"Total Files Processed: {self.zip_processed_count}")
+            elif status == "Error":
+                self.zip_tree.item(item_id, values=(filename, 'Error'), tags=('error',))
+        except Exception as e:
+            print(f"Error updating zip status in UI: {e}") # Item might not exist if app is closing
+
+    # --- Zip Service Method: Core re-zip logic ---
+    def process_zip_file(self, zip_path, item_id):
         """Unzips and re-zips a file to trigger file-based import."""
-        # Wait for the file to be fully copied, retrying for 5 seconds
+        
+        # Update UI to "Processing"
+        self.master.after(0, self._update_zip_status, item_id, "Processing")
+        
+        # Wait for the file to be fully copied
         for _ in range(5):
             try:
                 with open(zip_path, 'rb') as f:
                     pass
                 break
             except PermissionError:
-                print(f"File {zip_path} is locked, retrying...")
                 time.sleep(1)
             except FileNotFoundError:
                 print(f"File {zip_path} disappeared, aborting.")
                 return
         else:
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
+            self.master.after(0, self._update_zip_status, item_id, "Error")
             return
 
         temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
         original_filename = os.path.basename(zip_path)
         
         try:
-            # 1. Unzip the file
+            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
-            print(f"Unzipped '{original_filename}' to temp folder.")
+            print(f"Unzipped '{original_filename}'")
 
-            # 2. Delete the original zip file
+            # 2. Delete original
             os.remove(zip_path)
-            print(f"Removed original file: {zip_path}")
+            print(f"Removed original: {zip_path}")
 
-            # 3. Re-zip the contents
+            # 3. Re-zip
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, _, files in os.walk(temp_extract_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        # Write file to zip, preserving its relative path inside the zip
                         zip_ref.write(file_path, arcname=os.path.relpath(file_path, temp_extract_dir))
             
             print(f"Successfully re-packaged: {zip_path}")
+            self.master.after(0, self._update_zip_status, item_id, "Done")
 
         except Exception as e:
             print(f"Error processing zip file {zip_path}: {e}")
+            self.master.after(0, self._update_zip_status, item_id, "Error")
         
         finally:
-            # 4. Clean up the temporary folder
+            # 4. Clean up
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
-                print(f"Cleaned up temp folder: {temp_extract_dir}")
 
+    # --- App Quit Method ---
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log() # Final save
+        self._auto_save_log()
         
-        # --- Stop the file monitoring service ---
         if self.file_observer:
             self.file_observer.stop()
             self.file_observer.join()
