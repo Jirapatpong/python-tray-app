@@ -5,6 +5,11 @@ import os
 import sys
 import time
 import queue
+import zipfile  # New: For handling zip files
+import shutil   # New: For deleting temporary folders
+import yaml     # New: For reading the config.yml
+from watchdog.observers import Observer          # New: For monitoring the folder
+from watchdog.events import FileSystemEventHandler # New: For handling file events
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -19,6 +24,18 @@ def create_android_icon(color):
     draw.line((44, 12, 48, 6), fill=color, width=3)
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
+
+# --- New: Handler for the file monitoring service ---
+class ZipFileHandler(FileSystemEventHandler):
+    def __init__(self, app_instance):
+        self.app = app_instance
+
+    def on_created(self, event):
+        """Called when a file or directory is created."""
+        if not event.is_directory and event.src_path.endswith('.zip'):
+            print(f"New zip file detected: {event.src_path}")
+            # Run the processing in a new thread to avoid blocking
+            threading.Thread(target=self.app.process_zip_file, args=(event.src_path,), daemon=True).start()
 
 class App:
     def __init__(self, master, lock_file_path):
@@ -41,8 +58,16 @@ class App:
         self.notification_window = None
         self.notification_timer = None
         
-        # --- New variable for the auto-save log system ---
+        # --- New variables for auto-save log & file monitoring ---
         self.log_filepath = None
+        self.outbox_path = None
+        self.file_observer = None
+        
+        # --- Base path for finding configs/logs ---
+        if getattr(sys, 'frozen', False):
+            self.base_path = os.path.dirname(sys.executable)
+        else:
+            self.base_path = os.path.dirname(os.path.abspath(__file__))
 
         master.title("HHT Android Connect")
 
@@ -113,7 +138,10 @@ class App:
         
         # --- Setup auto-saving for the log file ---
         self._setup_log_file()
-        self._periodic_log_save() # Start the periodic save loop
+        self._periodic_log_save()
+        
+        # --- NEW: Start the re-zip file monitoring service ---
+        self._start_file_monitoring_service()
 
     def show_notification(self, message, is_connected):
         import tkinter as tk
@@ -213,9 +241,8 @@ class App:
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
         search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
-        # --- REMOVED the manual Save Log button ---
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
-        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5)) # Adjusted grid column
+        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5))
 
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
@@ -225,20 +252,11 @@ class App:
         self.api_log_text.tag_config('current_search', background='#F59E0B', foreground='black')
         self.switch_tab('device')
 
-    # --- REMOVED the manual save_api_log method ---
-
-    # --- NEW methods for auto-saving the log ---
     def _setup_log_file(self):
         """Creates the log directory and determines the filename for this session."""
         try:
-            if getattr(sys, 'frozen', False):
-                base_path = os.path.dirname(sys.executable)
-            else:
-                base_path = os.path.dirname(os.path.abspath(__file__))
-            
-            log_dir = os.path.join(base_path, "log")
+            log_dir = os.path.join(self.base_path, "log")
             os.makedirs(log_dir, exist_ok=True)
-
             timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"api_log_{timestamp}.txt"
             self.log_filepath = os.path.join(log_dir, filename)
@@ -249,10 +267,10 @@ class App:
     def _auto_save_log(self):
         """Saves the current content of the log widget to the session file."""
         if not self.log_filepath:
-            return # Don't save if the file path wasn't set up
+            return
         try:
             content = self.api_log_text.get("1.0", "end-1c")
-            if content.strip(): # Only write if there's content
+            if content.strip():
                 formatted_content = self._format_sql_log(content)
                 with open(self.log_filepath, 'w', encoding='utf-8') as f:
                     f.write(formatted_content)
@@ -263,7 +281,6 @@ class App:
         """Calls the auto-save method and reschedules itself."""
         if self.is_running:
             self._auto_save_log()
-            # Reschedule to run again after 30 seconds (30000 ms)
             self.master.after(30000, self._periodic_log_save)
 
     def _format_sql_log(self, raw_content):
@@ -345,7 +362,7 @@ class App:
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
                 self.api_log_text.tag_add('search', start_pos, end_pos)
-                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+                self.api_log_text.tag_remove('current_search', '1.S0', tk.END)
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
@@ -602,9 +619,101 @@ class App:
             return
         threading.Thread(target=self._disconnect_device).start()
 
+    # --- NEW: Method to load config and start file monitoring ---
+    def _load_config_path(self):
+        """Loads the Outbox path from the config.yml file."""
+        config_path = os.path.join(self.base_path, "configs", "config.yml")
+        try:
+            with open(config_path, 'r') as f:
+                config_data = yaml.safe_load(f)
+            
+            path_parts = config_data['SETTING']['DEFAULT_PRICE_TAG_PATH']
+            self.outbox_path = os.path.join(*path_parts)
+            
+            if not os.path.exists(self.outbox_path):
+                print(f"Warning: Configured Outbox path does not exist: {self.outbox_path}")
+                return False
+            
+            print(f"Monitoring Outbox path: {self.outbox_path}")
+            return True
+            
+        except FileNotFoundError:
+            print(f"Error: Config file not found at {config_path}")
+        except Exception as e:
+            print(f"Error loading config file: {e}")
+        return False
+
+    def _start_file_monitoring_service(self):
+        """Initializes and starts the watchdog file observer."""
+        if self._load_config_path():
+            event_handler = ZipFileHandler(self)
+            self.file_observer = Observer()
+            self.file_observer.schedule(event_handler, self.outbox_path, recursive=False)
+            self.file_observer.start()
+            print("File monitoring service started.")
+
+    # --- NEW: Core logic for the re-zipping service ---
+    def process_zip_file(self, zip_path):
+        """Unzips and re-zips a file to trigger file-based import."""
+        # Wait for the file to be fully copied, retrying for 5 seconds
+        for _ in range(5):
+            try:
+                with open(zip_path, 'rb') as f:
+                    pass
+                break
+            except PermissionError:
+                print(f"File {zip_path} is locked, retrying...")
+                time.sleep(1)
+            except FileNotFoundError:
+                print(f"File {zip_path} disappeared, aborting.")
+                return
+        else:
+            print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
+            return
+
+        temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
+        original_filename = os.path.basename(zip_path)
+        
+        try:
+            # 1. Unzip the file
+            os.makedirs(temp_extract_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_extract_dir)
+            print(f"Unzipped '{original_filename}' to temp folder.")
+
+            # 2. Delete the original zip file
+            os.remove(zip_path)
+            print(f"Removed original file: {zip_path}")
+
+            # 3. Re-zip the contents
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+                for root, _, files in os.walk(temp_extract_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # Write file to zip, preserving its relative path inside the zip
+                        zip_ref.write(file_path, arcname=os.path.relpath(file_path, temp_extract_dir))
+            
+            print(f"Successfully re-packaged: {zip_path}")
+
+        except Exception as e:
+            print(f"Error processing zip file {zip_path}: {e}")
+        
+        finally:
+            # 4. Clean up the temporary folder
+            if os.path.exists(temp_extract_dir):
+                shutil.rmtree(temp_extract_dir)
+                print(f"Cleaned up temp folder: {temp_extract_dir}")
+
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log() # Perform one final save on exit
+        self._auto_save_log() # Final save
+        
+        # --- Stop the file monitoring service ---
+        if self.file_observer:
+            self.file_observer.stop()
+            self.file_observer.join()
+            print("File monitoring service stopped.")
+
         if self.tray_icon:
             self.tray_icon.stop()
         if self.api_process:
