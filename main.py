@@ -721,7 +721,10 @@ class App:
         if filepath in self.processing_files:
             self.processing_files.remove(filepath)
 
+    # --- Updated process_zip_file method with Host OS override ---
     def process_zip_file(self, zip_path):
+        """Unzips and re-zips a file, setting Host OS to Unix."""
+        
         item_id = self.zip_file_map.get(zip_path)
         if not item_id:
             print(f"Error: Could not find item_id for {zip_path}")
@@ -729,16 +732,19 @@ class App:
 
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        for _ in range(5): # Wait up to 5s for file access
+        # Wait up to 5s for file access
+        for _ in range(5):
             try:
-                with open(zip_path, 'rb') as f: pass
-                break
-            except PermissionError: time.sleep(1)
+                # Try opening for read access to check if locked
+                with open(zip_path, 'rb') as f: pass 
+                break # Success
+            except PermissionError: 
+                time.sleep(1) # Wait and retry
             except FileNotFoundError:
-                print(f"File {zip_path} disappeared, aborting.")
+                print(f"File {zip_path} disappeared while waiting, aborting.")
                 self.master.after(0, self._remove_from_processing_list, zip_path)
                 return
-        else:
+        else: # Loop finished without break (timeout)
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_zip_status, item_id, "Error")
             self.master.after(0, self._remove_from_processing_list, zip_path)
@@ -748,21 +754,42 @@ class App:
         original_filename = os.path.basename(zip_path)
         
         try:
+            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
             print(f"Unzipped '{original_filename}'")
 
+            # 2. Delete original
             os.remove(zip_path)
             print(f"Removed original: {zip_path}")
 
+            # 3. Re-zip with modified metadata
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, _, files in os.walk(temp_extract_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        zip_ref.write(file_path, arcname=os.path.relpath(file_path, temp_extract_dir))
+                        # Determine the name this file should have inside the zip archive
+                        arcname = os.path.relpath(file_path, temp_extract_dir) 
+                        
+                        # --- MODIFICATION START ---
+                        # Create ZipInfo object to hold metadata
+                        zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
+                        
+                        # Override the Host OS (create_system): 0=DOS, 3=Unix
+                        zinfo.create_system = 3 
+                        
+                        # Optionally set external attributes to mimic Unix permissions (e.g., rw-r--r--)
+                        # The permissions are shifted left by 16 bits in the external_attr field.
+                        zinfo.external_attr = (0o644 << 16) # read/write for owner, read for group/others
+                        
+                        # Read the file content
+                        with open(file_path, "rb") as source:
+                            # Write the file content using the modified ZipInfo object
+                            zip_ref.writestr(zinfo, source.read()) 
+                        # --- MODIFICATION END ---
             
-            print(f"Successfully re-packaged: {zip_path}")
+            print(f"Successfully re-packaged with Unix Host OS: {zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
 
         except Exception as e:
@@ -770,10 +797,12 @@ class App:
             self.master.after(0, self._update_zip_status, item_id, "Error")
         
         finally:
+            # 4. Clean up
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
-            self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
-
+            # Remove from processing lock on the main thread
+            self.master.after(0, self._remove_from_processing_list, zip_path) 
+            
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
