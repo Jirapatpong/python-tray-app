@@ -33,13 +33,13 @@ class ZipFileHandler(FileSystemEventHandler):
     def on_created(self, event):
         """Called when a file or directory is created."""
         if not event.is_directory and event.src_path.endswith('.zip'):
-            # --- FIX: Check if this file is already being processed ---
+            # Check if this file is already being processed to avoid recursion
             if event.src_path in self.app.processing_files:
                 print(f"Ignoring self-generated file event: {event.src_path}")
                 return
-            # --- END FIX ---
                 
             print(f"New zip file detected: {event.src_path}")
+            # Schedule adding the file to the UI monitor on the main thread
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
 class App:
@@ -59,19 +59,23 @@ class App:
         self.lock_file_path = lock_file_path
         self.known_devices = set()
 
+        # --- Variables for the custom notification system ---
         self.notification_window = None
         self.notification_timer = None
         
+        # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
         self.outbox_path = None
         self.file_observer = None
         
+        # --- Variables for the Zip Monitor UI ---
         self.zip_processed_count = 0
-        self.zip_file_map = {}
+        self.zip_file_map = {} # Maps filepath to Treeview item ID
         
-        # --- NEW: Set to "lock" files being processed ---
+        # --- Set to "lock" files being processed to prevent recursion ---
         self.processing_files = set()
         
+        # --- Base path for finding configs/logs ---
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -88,6 +92,7 @@ class App:
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
         master.resizable(False, False)
 
+        # --- Color Palette ---
         self.COLOR_BG = "#E0E5EC"
         self.COLOR_SHADOW_LIGHT = "#FFFFFF"
         self.COLOR_SHADOW_DARK = "#A3B1C6"
@@ -97,7 +102,7 @@ class App:
         self.COLOR_DANGER = "#FF4757"
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
-        self.COLOR_WARNING = "#F59E0B"
+        self.COLOR_WARNING = "#F59E0B" # For "Processing" status
 
         master.configure(background=self.COLOR_BG)
 
@@ -105,6 +110,7 @@ class App:
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
 
+        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
         self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
@@ -129,6 +135,7 @@ class App:
                              background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
+        # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -137,19 +144,19 @@ class App:
         self.start_adb_server()
         self.connected_device = None
 
-        self.create_widgets()
-        self.refresh_devices()
-        self.update_tray_status()
+        self.create_widgets() # Build the UI
+        self.refresh_devices() # Initial device scan
+        self.update_tray_status() # Set initial tray icon
 
+        # Start background threads/services
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        
         self._setup_log_file()
         self._periodic_log_save()
-        
         self._start_file_monitoring_service()
 
+    # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
         import tkinter as tk
         if self.notification_timer:
@@ -188,6 +195,7 @@ class App:
         self.notification_window = None
         self.notification_timer = None
 
+    # --- UI Creation ---
     def create_widgets(self):
         import tkinter as tk
         from tkinter import ttk, scrolledtext
@@ -217,6 +225,7 @@ class App:
         self.content_frame.grid_rowconfigure(0, weight=1)
         self.content_frame.grid_columnconfigure(0, weight=1)
         
+        # Frame 1: Device Status
         self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.device_frame.grid(row=0, column=0, sticky='nsew')
         self.device_frame.grid_rowconfigure(0, weight=1)
@@ -239,6 +248,7 @@ class App:
         self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
 
+        # Frame 2: API Log
         self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.api_frame.grid(row=0, column=0, sticky='nsew')
         self.api_frame.grid_rowconfigure(1, weight=1)
@@ -263,6 +273,7 @@ class App:
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
 
+        # Frame 3: Zip Monitor
         self.zip_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.zip_frame.grid(row=0, column=0, sticky='nsew')
         self.zip_frame.grid_rowconfigure(1, weight=1)
@@ -282,8 +293,9 @@ class App:
         self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
 
-        self.switch_tab('device')
+        self.switch_tab('device') # Start on the first tab
 
+    # --- Log File Methods ---
     def _setup_log_file(self):
         try:
             log_dir = os.path.join(self.base_path, "log")
@@ -318,7 +330,6 @@ class App:
             ' FROM ', ' WHERE ', ' INSERT INTO ', ' UPDATE ', ' SET ', ' VALUES ',
             ' LEFT JOIN ', ' INNER JOIN ', ' GROUP BY ', ' ORDER BY ', ' DELETE FROM '
         ]
-        
         for line in raw_content.splitlines():
             if 'SELECT ' in line or 'INSERT INTO ' in line or 'UPDATE ' in line or 'DELETE FROM ' in line:
                 formatted_lines.append("--- SQL Query ---")
@@ -328,9 +339,9 @@ class App:
                 formatted_lines.append("-" * 17 + "\n")
             else:
                 formatted_lines.append(line)
-        
         return "\n".join(formatted_lines)
 
+    # --- UI Helper Methods ---
     def create_neumorphic_button(self, parent, text, command, is_accent=False):
         import tkinter as tk
         fg_color = 'white' if is_accent else self.COLOR_TEXT
@@ -370,6 +381,7 @@ class App:
             self.zip_frame.grid()
             self.zip_tab_btn.state(['selected'])
 
+    # --- API Process Methods ---
     def set_api_status(self, status):
         self.api_status = status
         if status == "Online":
@@ -456,6 +468,7 @@ class App:
         if "fiber" in message.lower() and self.api_status != "Online":
             self.set_api_status("Online")
 
+    # --- Window and Tray Methods ---
     def hide_window(self):
         self.master.withdraw()
 
@@ -486,6 +499,7 @@ class App:
             pystray.MenuItem('Quit', self.on_app_quit)
         )
 
+    # --- Device Monitoring and Connection Methods ---
     def device_monitor_loop(self):
         while self.is_running:
             try:
@@ -594,6 +608,7 @@ class App:
         finally:
             self.disconnect_button.config(state='normal')
 
+    # --- ADB Helper Methods ---
     def get_adb_path(self):
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -655,30 +670,23 @@ class App:
             return
         threading.Thread(target=self._disconnect_device).start()
 
-    # --- Zip Service Method: Load config ---
+    # --- Zip Service Methods ---
     def _load_config_path(self):
         config_path = os.path.join(self.base_path, "configs", "config.yml")
         try:
             with open(config_path, 'r') as f:
                 config_data = yaml.safe_load(f)
-            
             path_parts = config_data['SETTING']['DEFAULT_PRICE_TAG_PATH']
             self.outbox_path = os.path.join(*path_parts)
-            
             if not os.path.exists(self.outbox_path):
                 print(f"Warning: Configured Outbox path does not exist: {self.outbox_path}")
                 return False
-            
             print(f"Monitoring Outbox path: {self.outbox_path}")
             return True
-            
-        except FileNotFoundError:
-            print(f"Error: Config file not found at {config_path}")
-        except Exception as e:
-            print(f"Error loading config file: {e}")
+        except FileNotFoundError: print(f"Error: Config file not found at {config_path}")
+        except Exception as e: print(f"Error loading config file: {e}")
         return False
 
-    # --- Zip Service Method: Start monitoring ---
     def _start_file_monitoring_service(self):
         if self._load_config_path():
             event_handler = ZipFileHandler(self)
@@ -687,23 +695,15 @@ class App:
             self.file_observer.start()
             print("File monitoring service started.")
 
-    # --- Zip Service Method: Add file to UI ---
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
-        
-        # --- FIX: Add to processing lock ---
-        self.processing_files.add(filepath)
-        
+        self.processing_files.add(filepath) # Add to lock list
         item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
-        self.zip_file_map[filepath] = item_id # Map path to item ID
-        
-        # Pass only the path to the thread
+        self.zip_file_map[filepath] = item_id
         threading.Thread(target=self.process_zip_file, args=(filepath,), daemon=True).start()
 
-    # --- Zip Service Method: Update file status in UI ---
     def _update_zip_status(self, item_id, status):
-        """Updates the status of a file in the Zip Monitor UI."""
         try:
             filename = self.zip_tree.item(item_id, 'values')[0]
             if status == "Processing":
@@ -717,17 +717,11 @@ class App:
         except Exception as e:
             print(f"Error updating zip status in UI: {e}")
 
-    # --- NEW: Helper to remove file from processing list ---
     def _remove_from_processing_list(self, filepath):
-        """Removes a file from the processing set once done/failed."""
         if filepath in self.processing_files:
             self.processing_files.remove(filepath)
 
-    # --- Zip Service Method: Core re-zip logic ---
     def process_zip_file(self, zip_path):
-        """Unzips and re-zips a file to trigger file-based import."""
-        
-        # Get the UI item ID from the map
         item_id = self.zip_file_map.get(zip_path)
         if not item_id:
             print(f"Error: Could not find item_id for {zip_path}")
@@ -735,21 +729,19 @@ class App:
 
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        for _ in range(5):
+        for _ in range(5): # Wait up to 5s for file access
             try:
-                with open(zip_path, 'rb') as f:
-                    pass
+                with open(zip_path, 'rb') as f: pass
                 break
-            except PermissionError:
-                time.sleep(1)
+            except PermissionError: time.sleep(1)
             except FileNotFoundError:
                 print(f"File {zip_path} disappeared, aborting.")
-                self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
+                self.master.after(0, self._remove_from_processing_list, zip_path)
                 return
         else:
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_zip_status, item_id, "Error")
-            self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
+            self.master.after(0, self._remove_from_processing_list, zip_path)
             return
 
         temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
@@ -780,39 +772,38 @@ class App:
         finally:
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
-            # --- FIX: Remove from processing lock on the main thread ---
-            self.master.after(0, self._remove_from_processing_list, zip_path)
+            self.master.after(0, self._remove_from_processing_list, zip_path) # Remove lock
 
-    # --- App Quit Method ---
+    # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log()
+        self._auto_save_log() # Final save
         
+        # Stop file monitor first
         if self.file_observer:
             self.file_observer.stop()
             self.file_observer.join()
             print("File monitoring service stopped.")
 
-        if self.tray_icon:
-            self.tray_icon.stop()
-        if self.api_process:
-            self.api_process.terminate()
+        # Stop other components
+        if self.tray_icon: self.tray_icon.stop()
+        if self.api_process: self.api_process.terminate()
+        
+        # Clean up ADB connection
         if self.connected_device:
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            except Exception as e:
-                print(f"Could not disconnect on exit: {e}")
+            except Exception as e: print(f"Could not disconnect on exit: {e}")
         
+        # Clean up lock file
         try:
-            if os.path.exists(self.lock_file_path):
-                os.remove(self.lock_file_path)
-        except Exception as e:
-            print(f"Could not remove lock file: {e}")
+            if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
+        except Exception as e: print(f"Could not remove lock file: {e}")
 
         self.master.destroy()
 
-
+# --- Main Execution Block ---
 if __name__ == "__main__":
     import tkinter as tk
     from tkinter import messagebox
@@ -821,46 +812,41 @@ if __name__ == "__main__":
     import ctypes
     import psutil
 
+    # --- Robust Single-Instance Check ---
     temp_dir = os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Temp')
     lock_file = os.path.join(temp_dir, 'hht_android_connect.lock')
 
     if os.path.exists(lock_file):
         try:
-            with open(lock_file, 'r') as f:
-                pid = int(f.read().strip())
-            
+            with open(lock_file, 'r') as f: pid = int(f.read().strip())
             if psutil.pid_exists(pid):
                 messagebox.showinfo("Already Running", "HHT Android Connect is already running in the system tray.")
                 sys.exit()
-            else:
-                print("Stale lock file found. The application will start.")
-        except (IOError, ValueError):
-            print("Corrupt lock file found. The application will start.")
+            else: print("Stale lock file found. The application will start.")
+        except (IOError, ValueError): print("Corrupt lock file found. The application will start.")
 
-    with open(lock_file, 'w') as f:
-        f.write(str(os.getpid()))
+    # Create lock file for this instance
+    with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
+    # --- Admin Check ---
     def is_admin():
-        try:
-            return ctypes.windll.shell32.IsUserAnAdmin()
-        except:
-            return False
+        try: return ctypes.windll.shell32.IsUserAnAdmin()
+        except: return False
 
+    # --- Launch Application ---
     if is_admin():
         try:
             root = tk.Tk()
             app = App(root, lock_file_path=lock_file) 
-            root.protocol('WM_DELETE_WINDOW', app.hide_window)
+            root.protocol('WM_DELETE_WINDOW', app.hide_window) # Hide on close button
             initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
             icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
             app.tray_icon = icon
-            threading.Thread(target=icon.run, daemon=True).start()
-            root.mainloop()
-        except Exception as e:
-            if os.path.exists(lock_file):
-                os.remove(lock_file)
+            threading.Thread(target=icon.run, daemon=True).start() # Run tray icon in background
+            root.mainloop() # Start Tkinter event loop
+        except Exception as e: # Cleanup lock file on unexpected error
+            if os.path.exists(lock_file): os.remove(lock_file)
             messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
-    else:
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
+    else: # Re-launch as admin if needed
+        if os.path.exists(lock_file): os.remove(lock_file) # Remove lock before re-launch
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
