@@ -721,9 +721,9 @@ class App:
         if filepath in self.processing_files:
             self.processing_files.remove(filepath)
 
-    # --- Updated process_zip_file method with Host OS override ---
+    # --- Updated process_zip_file method with Host OS override and forward slashes ---
     def process_zip_file(self, zip_path):
-        """Unzips and re-zips a file, setting Host OS to Unix."""
+        """Unzips and re-zips a file, setting Host OS to Unix and ensuring forward slashes."""
         
         item_id = self.zip_file_map.get(zip_path)
         if not item_id:
@@ -764,7 +764,7 @@ class App:
             os.remove(zip_path)
             print(f"Removed original: {zip_path}")
 
-            # 3. Re-zip with modified metadata
+            # 3. Re-zip with modified metadata and standardized paths
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, _, files in os.walk(temp_extract_dir):
                     for file in files:
@@ -773,15 +773,17 @@ class App:
                         arcname = os.path.relpath(file_path, temp_extract_dir) 
                         
                         # --- MODIFICATION START ---
+                        # Ensure forward slashes for zip standard compatibility
+                        arcname = arcname.replace(os.path.sep, '/') 
+                        
                         # Create ZipInfo object to hold metadata
                         zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
                         
                         # Override the Host OS (create_system): 0=DOS, 3=Unix
                         zinfo.create_system = 3 
                         
-                        # Optionally set external attributes to mimic Unix permissions (e.g., rw-r--r--)
-                        # The permissions are shifted left by 16 bits in the external_attr field.
-                        zinfo.external_attr = (0o644 << 16) # read/write for owner, read for group/others
+                        # Optionally set external attributes to mimic Unix permissions
+                        zinfo.external_attr = (0o644 << 16) 
                         
                         # Read the file content
                         with open(file_path, "rb") as source:
@@ -789,7 +791,7 @@ class App:
                             zip_ref.writestr(zinfo, source.read()) 
                         # --- MODIFICATION END ---
             
-            print(f"Successfully re-packaged with Unix Host OS: {zip_path}")
+            print(f"Successfully re-packaged with Unix Host OS & standard paths: {zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
 
         except Exception as e:
