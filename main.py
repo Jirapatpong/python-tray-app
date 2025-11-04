@@ -7,9 +7,10 @@ import time
 import queue
 import zipfile
 import shutil
-import yaml
+import configparser # New: Replaces yaml
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from tkinter import filedialog 
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -25,22 +26,30 @@ def create_android_icon(color):
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
-# --- Handler for the file monitoring service ---
+# --- Handler for the Zip file monitoring service ---
 class ZipFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
 
     def on_created(self, event):
-        """Called when a file or directory is created."""
         if not event.is_directory and event.src_path.endswith('.zip'):
-            # Check if this file is already being processed to avoid recursion
             if event.src_path in self.app.processing_files:
                 print(f"Ignoring self-generated file event: {event.src_path}")
                 return
-                
             print(f"New zip file detected: {event.src_path}")
-            # Schedule adding the file to the UI monitor on the main thread
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
+
+# --- NEW: Handler for the APK file monitoring service ---
+class ApkFileHandler(FileSystemEventHandler):
+    def __init__(self, app_instance):
+        self.app = app_instance
+
+    def on_created(self, event):
+        """Called when an APK file is created."""
+        if not event.is_directory and event.src_path.endswith('.apk'):
+            print(f"New APK file detected: {event.src_path}")
+            # Schedule adding the file to the UI monitor on the main thread
+            self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
 
 class App:
     def __init__(self, master, lock_file_path):
@@ -59,23 +68,26 @@ class App:
         self.lock_file_path = lock_file_path
         self.known_devices = set()
 
-        # --- Variables for the custom notification system ---
         self.notification_window = None
         self.notification_timer = None
         
-        # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        self.outbox_path = None
-        self.file_observer = None
         
-        # --- Variables for the Zip Monitor UI ---
+        # --- Paths for monitors ---
+        self.zip_monitor_path = None
+        self.apk_monitor_path = None
+        self.zip_file_observer = None
+        self.apk_file_observer = None # New observer for APKs
+        
+        # --- Zip Monitor UI ---
         self.zip_processed_count = 0
-        self.zip_file_map = {} # Maps filepath to Treeview item ID
-        
-        # --- Set to "lock" files being processed to prevent recursion ---
+        self.zip_file_map = {}
         self.processing_files = set()
         
-        # --- Base path for finding configs/logs ---
+        # --- APK Monitor UI ---
+        self.apk_processed_count = 0
+        self.apk_file_map = {} # Maps filepath to Treeview item ID
+        
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -102,7 +114,7 @@ class App:
         self.COLOR_DANGER = "#FF4757"
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
-        self.COLOR_WARNING = "#F59E0B" # For "Processing" status
+        self.COLOR_WARNING = "#F59E0B"
 
         master.configure(background=self.COLOR_BG)
 
@@ -144,17 +156,16 @@ class App:
         self.start_adb_server()
         self.connected_device = None
 
-        self.create_widgets() # Build the UI
-        self.refresh_devices() # Initial device scan
-        self.update_tray_status() # Set initial tray icon
+        self.create_widgets()
+        self.refresh_devices()
+        self.update_tray_status()
 
-        # Start background threads/services
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
         self._setup_log_file()
         self._periodic_log_save()
-        self._start_file_monitoring_service()
+        self._start_monitoring_services() # Renamed method
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -215,6 +226,8 @@ class App:
         self.api_tab_btn.pack(side='left', padx=1)
         self.zip_tab_btn = ttk.Button(tab_container, text="Zip Monitor", style='Tab.TButton', command=lambda: self.switch_tab('zip'))
         self.zip_tab_btn.pack(side='left', padx=1)
+        self.apk_tab_btn = ttk.Button(tab_container, text="APK Monitor", style='Tab.TButton', command=lambda: self.switch_tab('apk')) # Renamed
+        self.apk_tab_btn.pack(side='left', padx=1)
         
         shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
         shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(22, 18), pady=(0, 18))
@@ -292,6 +305,26 @@ class App:
         self.zip_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
+        
+        # --- NEW: Frame 4: APK Monitor (Replaces Installer) ---
+        self.apk_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.apk_frame.grid(row=0, column=0, sticky='nsew')
+        self.apk_frame.grid_rowconfigure(1, weight=1)
+        self.apk_frame.grid_columnconfigure(0, weight=1)
+        apk_header_frame = tk.Frame(self.apk_frame, bg=self.COLOR_BG)
+        apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
+        self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.apk_count_label.pack(side='left')
+        self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
+        self.apk_tree.heading('filename', text='FILENAME', anchor='w')
+        self.apk_tree.heading('status', text='STATUS', anchor='w')
+        self.apk_tree.column('filename', anchor='w', width=350)
+        self.apk_tree.column('status', anchor='w', width=100)
+        self.apk_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
+        self.apk_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
+        self.apk_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
+        self.apk_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
+        self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
 
         self.switch_tab('device') # Start on the first tab
 
@@ -366,10 +399,12 @@ class App:
         self.device_tab_btn.state(['!selected'])
         self.api_tab_btn.state(['!selected'])
         self.zip_tab_btn.state(['!selected'])
+        self.apk_tab_btn.state(['!selected'])
         
         self.device_frame.grid_remove()
         self.api_frame.grid_remove()
         self.zip_frame.grid_remove()
+        self.apk_frame.grid_remove()
         
         if tab_name == 'device':
             self.device_frame.grid()
@@ -380,6 +415,9 @@ class App:
         elif tab_name == 'zip':
             self.zip_frame.grid()
             self.zip_tab_btn.state(['selected'])
+        elif tab_name == 'apk':
+            self.apk_frame.grid()
+            self.apk_tab_btn.state(['selected'])
 
     # --- API Process Methods ---
     def set_api_status(self, status):
@@ -670,31 +708,64 @@ class App:
             return
         threading.Thread(target=self._disconnect_device).start()
 
-    # --- Zip Service Methods ---
-    def _load_config_path(self):
-        config_path = os.path.join(self.base_path, "configs", "config.yml")
+    # --- Config & Monitoring Service Methods ---
+    def _load_configs(self):
+        """Loads paths from config.ini using configparser."""
+        config_path = os.path.join(self.base_path, "configs", "config.ini")
+        config = configparser.ConfigParser()
+        if not os.path.exists(config_path):
+            print(f"Error: Config file not found at {config_path}")
+            return False
+            
         try:
-            with open(config_path, 'r') as f:
-                config_data = yaml.safe_load(f)
-            path_parts = config_data['SETTING']['DEFAULT_PRICE_TAG_PATH']
-            self.outbox_path = os.path.join(*path_parts)
-            if not os.path.exists(self.outbox_path):
-                print(f"Warning: Configured Outbox path does not exist: {self.outbox_path}")
-                return False
-            print(f"Monitoring Outbox path: {self.outbox_path}")
+            config.read(config_path)
+            
+            # Load Zip monitor path
+            try:
+                self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
+                if not os.path.exists(self.zip_monitor_path):
+                    print(f"Warning: Configured Zip Outbox path does not exist: {self.zip_monitor_path}")
+                else:
+                    print(f"Monitoring Zip Outbox path: {self.zip_monitor_path}")
+            except KeyError:
+                print("Error: DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini")
+                
+            # Load APK monitor path
+            try:
+                self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
+                if not os.path.exists(self.apk_monitor_path):
+                    print(f"Warning: Configured APK Monitor path does not exist: {self.apk_monitor_path}")
+                else:
+                    print(f"Monitoring APK path: {self.apk_monitor_path}")
+            except KeyError:
+                print("Error: MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
+                
             return True
-        except FileNotFoundError: print(f"Error: Config file not found at {config_path}")
-        except Exception as e: print(f"Error loading config file: {e}")
-        return False
+            
+        except Exception as e:
+            print(f"Error loading config.ini file: {e}")
+            return False
 
-    def _start_file_monitoring_service(self):
-        if self._load_config_path():
-            event_handler = ZipFileHandler(self)
-            self.file_observer = Observer()
-            self.file_observer.schedule(event_handler, self.outbox_path, recursive=False)
-            self.file_observer.start()
-            print("File monitoring service started.")
+    def _start_monitoring_services(self):
+        """Initializes and starts all watchdog file observers."""
+        if self._load_configs():
+            # Start Zip monitor
+            if self.zip_monitor_path and os.path.exists(self.zip_monitor_path):
+                zip_event_handler = ZipFileHandler(self)
+                self.zip_file_observer = Observer()
+                self.zip_file_observer.schedule(zip_event_handler, self.zip_monitor_path, recursive=False)
+                self.zip_file_observer.start()
+                print("Zip monitoring service started.")
+            
+            # Start APK monitor
+            if self.apk_monitor_path and os.path.exists(self.apk_monitor_path):
+                apk_event_handler = ApkFileHandler(self)
+                self.apk_file_observer = Observer()
+                self.apk_file_observer.schedule(apk_event_handler, self.apk_monitor_path, recursive=False)
+                self.apk_file_observer.start()
+                print("APK monitoring service started.")
 
+    # --- Zip Service Methods ---
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
@@ -721,10 +792,7 @@ class App:
         if filepath in self.processing_files:
             self.processing_files.remove(filepath)
 
-    # --- Updated process_zip_file method with Host OS override and forward slashes ---
     def process_zip_file(self, zip_path):
-        """Unzips and re-zips a file, setting Host OS to Unix and ensuring forward slashes."""
-        
         item_id = self.zip_file_map.get(zip_path)
         if not item_id:
             print(f"Error: Could not find item_id for {zip_path}")
@@ -732,19 +800,17 @@ class App:
 
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        # Wait up to 5s for file access
         for _ in range(5):
             try:
-                # Try opening for read access to check if locked
                 with open(zip_path, 'rb') as f: pass 
-                break # Success
+                break 
             except PermissionError: 
-                time.sleep(1) # Wait and retry
+                time.sleep(1) 
             except FileNotFoundError:
                 print(f"File {zip_path} disappeared while waiting, aborting.")
                 self.master.after(0, self._remove_from_processing_list, zip_path)
                 return
-        else: # Loop finished without break (timeout)
+        else: 
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_zip_status, item_id, "Error")
             self.master.after(0, self._remove_from_processing_list, zip_path)
@@ -754,42 +820,25 @@ class App:
         original_filename = os.path.basename(zip_path)
         
         try:
-            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
             print(f"Unzipped '{original_filename}'")
 
-            # 2. Delete original
             os.remove(zip_path)
             print(f"Removed original: {zip_path}")
 
-            # 3. Re-zip with modified metadata and standardized paths
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, _, files in os.walk(temp_extract_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        # Determine the name this file should have inside the zip archive
                         arcname = os.path.relpath(file_path, temp_extract_dir) 
-                        
-                        # --- MODIFICATION START ---
-                        # Ensure forward slashes for zip standard compatibility
                         arcname = arcname.replace(os.path.sep, '/') 
-                        
-                        # Create ZipInfo object to hold metadata
                         zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
-                        
-                        # Override the Host OS (create_system): 0=DOS, 3=Unix
-                        zinfo.create_system = 3 
-                        
-                        # Optionally set external attributes to mimic Unix permissions
+                        zinfo.create_system = 3
                         zinfo.external_attr = (0o644 << 16) 
-                        
-                        # Read the file content
                         with open(file_path, "rb") as source:
-                            # Write the file content using the modified ZipInfo object
                             zip_ref.writestr(zinfo, source.read()) 
-                        # --- MODIFICATION END ---
             
             print(f"Successfully re-packaged with Unix Host OS & standard paths: {zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
@@ -799,35 +848,107 @@ class App:
             self.master.after(0, self._update_zip_status, item_id, "Error")
         
         finally:
-            # 4. Clean up
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
-            # Remove from processing lock on the main thread
             self.master.after(0, self._remove_from_processing_list, zip_path) 
+            
+    # --- NEW: APK Installer Methods ---
+    def _add_apk_to_monitor(self, filepath):
+        """Adds a new file to the APK Monitor UI and starts processing."""
+        import tkinter as tk
+        filename = os.path.basename(filepath)
+        
+        # Add to Treeview and get its unique item ID
+        item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
+        
+        # Store the item ID for later updates
+        self.apk_file_map[filepath] = item_id
+        
+        # Start the processing in a background thread
+        threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
+        
+    def _run_apk_install(self, apk_path, item_id):
+        """Worker thread for running the 'adb install' command."""
+        
+        self.master.after(0, self._update_apk_status, item_id, "Processing")
+        
+        # Wait for file to be fully copied
+        for _ in range(5):
+            try:
+                with open(apk_path, 'rb') as f: pass
+                break
+            except PermissionError:
+                time.sleep(1)
+            except FileNotFoundError:
+                print(f"APK {apk_path} disappeared, aborting.")
+                self.master.after(0, self._update_apk_status, item_id, "Error: File disappeared")
+                return
+        else:
+            print(f"Failed to access file {apk_path} after 5 seconds, skipping.")
+            self.master.after(0, self._update_apk_status, item_id, "Error: File locked")
+            return
+            
+        if not self.connected_device:
+            self.master.after(0, self._update_apk_status, item_id, "Error: No device")
+            return
+            
+        try:
+            device_id = self.connected_device
+            command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
+            
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            if "Success" in result.stdout:
+                self.master.after(0, self._update_apk_status, item_id, "Success")
+            else:
+                error_message = (result.stdout or result.stderr).strip().split('\n')[-1]
+                if not error_message: error_message = "Unknown error"
+                self.master.after(0, self._update_apk_status, item_id, f"Error: {error_message}")
+
+        except Exception as e:
+            self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
+            
+    def _update_apk_status(self, item_id, status_message):
+        """Updates the APK status label on the main UI thread."""
+        try:
+            filename = self.apk_tree.item(item_id, 'values')[0]
+            
+            if status_message == "Processing":
+                self.apk_tree.item(item_id, values=(filename, 'Processing'), tags=('processing',))
+            elif status_message == "Success":
+                self.apk_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
+                self.apk_processed_count += 1
+                self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
+            else:
+                # Any other message is an error
+                self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
+        except Exception as e:
+            print(f"Error updating APK status in UI: {e}")
             
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
         self._auto_save_log() # Final save
         
-        # Stop file monitor first
-        if self.file_observer:
-            self.file_observer.stop()
-            self.file_observer.join()
-            print("File monitoring service stopped.")
+        if self.zip_file_observer:
+            self.zip_file_observer.stop()
+            self.zip_file_observer.join()
+            print("Zip monitoring service stopped.")
 
-        # Stop other components
+        if self.apk_file_observer: # Stop new observer
+            self.apk_file_observer.stop()
+            self.apk_file_observer.join()
+            print("APK monitoring service stopped.")
+
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
         
-        # Clean up ADB connection
         if self.connected_device:
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
-        # Clean up lock file
         try:
             if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
         except Exception as e: print(f"Could not remove lock file: {e}")
@@ -856,7 +977,6 @@ if __name__ == "__main__":
             else: print("Stale lock file found. The application will start.")
         except (IOError, ValueError): print("Corrupt lock file found. The application will start.")
 
-    # Create lock file for this instance
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
     # --- Admin Check ---
@@ -869,15 +989,15 @@ if __name__ == "__main__":
         try:
             root = tk.Tk()
             app = App(root, lock_file_path=lock_file) 
-            root.protocol('WM_DELETE_WINDOW', app.hide_window) # Hide on close button
+            root.protocol('WM_DELETE_WINDOW', app.hide_window)
             initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
             icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
             app.tray_icon = icon
-            threading.Thread(target=icon.run, daemon=True).start() # Run tray icon in background
-            root.mainloop() # Start Tkinter event loop
-        except Exception as e: # Cleanup lock file on unexpected error
+            threading.Thread(target=icon.run, daemon=True).start()
+            root.mainloop()
+        except Exception as e:
             if os.path.exists(lock_file): os.remove(lock_file)
             messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
-    else: # Re-launch as admin if needed
-        if os.path.exists(lock_file): os.remove(lock_file) # Remove lock before re-launch
+    else:
+        if os.path.exists(lock_file): os.remove(lock_file)
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
