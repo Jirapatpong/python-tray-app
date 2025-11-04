@@ -2,5 +2,4 @@ pystray==0.19.5
 Pillow==10.3.0
 psutil
 pyinstaller
-pyyaml
 watchdog
