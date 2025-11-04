@@ -8,6 +8,7 @@ import queue
 import zipfile
 import shutil
 import configparser # Using configparser for .ini files
+import datetime # New: For log date management
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -48,8 +49,10 @@ class ApkFileHandler(FileSystemEventHandler):
     def process_event(self, event):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
+            # Check if this file is already being processed
             if event.src_path in self.app.apk_processing_files:
-                return
+                return # Ignore, already in the queue or processing
+            
             print(f"New APK file event ({event.event_type}): {event.src_path}")
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
 
@@ -57,6 +60,7 @@ class ApkFileHandler(FileSystemEventHandler):
         self.process_event(event)
         
     def on_modified(self, event):
+        # This catches files that are "pasted" or slowly copied
         self.process_event(event)
 
 class App:
@@ -79,24 +83,24 @@ class App:
         self.notification_window = None
         self.notification_timer = None
         
+        # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        
+        self.log_dir = None # New: Store log directory
+        self.current_log_date = None # New: Track current log date
         self.zip_monitor_path = None
         self.apk_monitor_path = None
         self.zip_file_observer = None
         self.apk_file_observer = None
         
+        # --- Zip Monitor ---
         self.zip_processed_count = 0
         self.zip_file_map = {}
         self.processing_files = set()
         
+        # --- APK Monitor ---
         self.apk_processed_count = 0
         self.apk_file_map = {}
         self.apk_processing_files = set()
-        
-        self.apk_install_queue = queue.Queue()
-        
-        self.adb_lock = threading.Lock()
         
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
@@ -114,6 +118,7 @@ class App:
         master.geometry(f"{app_width}x{app_height}+{x_pos}+{y_pos}")
         master.resizable(False, False)
 
+        # --- Color Palette ---
         self.COLOR_BG = "#E0E5EC"
         self.COLOR_SHADOW_LIGHT = "#FFFFFF"
         self.COLOR_SHADOW_DARK = "#A3B1C6"
@@ -131,6 +136,7 @@ class App:
         icon_photo = ImageTk.PhotoImage(self.icon_image)
         master.iconphoto(True, icon_photo)
 
+        # --- Style Configuration ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
         self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
@@ -155,6 +161,7 @@ class App:
                              background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
+        # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -170,15 +177,10 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        self._setup_log_file()
+        self._setup_log_file() # This now cleans logs, sets path, and loads today's log
         self._periodic_log_save()
-        
-        self.apk_worker_thread = threading.Thread(target=self._apk_install_worker, daemon=True)
-        self.apk_worker_thread.start()
-        
         self._start_monitoring_services()
-        # --- REMOVED APK scan from startup ---
-        # self._scan_existing_apk_files()
+        self._scan_existing_apk_files()
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -344,31 +346,108 @@ class App:
 
     # --- Log File Methods ---
     def _setup_log_file(self):
+        """Creates log dir, cleans old logs, and sets path for today's log."""
         try:
-            log_dir = os.path.join(self.base_path, "log")
-            os.makedirs(log_dir, exist_ok=True)
-            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"api_log_{timestamp}.txt"
-            self.log_filepath = os.path.join(log_dir, filename)
+            self.log_dir = os.path.join(self.base_path, "log")
+            os.makedirs(self.log_dir, exist_ok=True)
+            
+            # Run cleanup
+            self._cleanup_old_logs()
+
+            # Set path for today
+            self.current_log_date = time.strftime("%Y-%m-%d")
+            filename = f"api_log_{self.current_log_date}.txt"
+            self.log_filepath = os.path.join(self.log_dir, filename)
             print(f"Logging API output to: {self.log_filepath}")
+            
+            # Load any existing content from today's log
+            self._load_log_for_today()
+            
         except Exception as e:
             print(f"Error setting up log file: {e}")
 
+    def _cleanup_old_logs(self):
+        """Deletes log files older than 7 days."""
+        if not self.log_dir:
+            return
+        
+        print("Cleaning up old logs...")
+        try:
+            cutoff = datetime.datetime.now() - datetime.timedelta(days=7)
+            for filename in os.listdir(self.log_dir):
+                if filename.startswith("api_log_") and filename.endswith(".txt"):
+                    try:
+                        date_str = filename.replace("api_log_", "").replace(".txt", "")
+                        file_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                        if file_date < cutoff:
+                            filepath_to_delete = os.path.join(self.log_dir, filename)
+                            os.remove(filepath_to_delete)
+                            print(f"Deleted old log: {filename}")
+                    except ValueError:
+                        # Ignore files with non-date names
+                        print(f"Skipping file with unexpected name: {filename}")
+        except Exception as e:
+            print(f"Error during log cleanup: {e}")
+            
+    def _load_log_for_today(self):
+        """Loads existing log content from today's file into the widget."""
+        if self.log_filepath and os.path.exists(self.log_filepath):
+            try:
+                with open(self.log_filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                if content:
+                    self.api_log_text.config(state='normal')
+                    self.api_log_text.insert('1.0', content)
+                    self.api_log_text.see('end')
+                    self.api_log_text.config(state='disabled')
+                    print(f"Loaded existing log from {self.log_filepath}")
+            except Exception as e:
+                print(f"Error loading existing log: {e}")
+
     def _auto_save_log(self):
+        """Saves the current log, handling daily rollover."""
         if not self.log_filepath:
             return
+        
         try:
             content = self.api_log_text.get("1.0", "end-1c")
-            if content.strip():
-                formatted_content = self._format_sql_log(content)
-                with open(self.log_filepath, 'w', encoding='utf-8') as f:
-                    f.write(formatted_content)
+            today_date_str = time.strftime("%Y-%m-%d")
+            
+            # Check for date change (midnight rollover)
+            if today_date_str != self.current_log_date:
+                print(f"Date changed. Saving final log for {self.current_log_date}")
+                # 1. Save yesterday's content to yesterday's file one last time
+                if content.strip():
+                    formatted_content = self._format_sql_log(content)
+                    with open(self.log_filepath, 'w', encoding='utf-8') as f:
+                        f.write(formatted_content)
+                
+                # 2. Update path to today's file
+                self.current_log_date = today_date_str
+                filename = f"api_log_{self.current_log_date}.txt"
+                self.log_filepath = os.path.join(self.log_dir, filename)
+                
+                # 3. Clear the log widget for the new day
+                self.api_log_text.config(state='normal')
+                self.api_log_text.delete('1.0', 'end')
+                self.api_log_text.config(state='disabled')
+                print(f"Rolled over to new log file: {self.log_filepath}")
+                
+            else:
+                # No date change, just overwrite today's file with current widget content
+                if content.strip():
+                    formatted_content = self._format_sql_log(content)
+                    with open(self.log_filepath, 'w', encoding='utf-8') as f:
+                        f.write(formatted_content)
+                        
         except Exception as e:
             print(f"Error during auto-save: {e}")
 
     def _periodic_log_save(self):
+        """Calls the auto-save method and reschedules itself."""
         if self.is_running:
             self._auto_save_log()
+            # Reschedule to run again after 30 seconds (30000 ms)
             self.master.after(30000, self._periodic_log_save)
 
     def _format_sql_log(self, raw_content):
@@ -555,10 +634,9 @@ class App:
     def device_monitor_loop(self):
         while self.is_running:
             try:
-                with self.adb_lock:
-                    result = subprocess.run([self.ADB_PATH, "devices"], 
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                            text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                result = subprocess.run([self.ADB_PATH, "devices"], 
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                        text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 
                 current_devices = set(self.parse_device_list(result.stdout))
 
@@ -605,9 +683,7 @@ class App:
     def _refresh_devices(self):
         from tkinter import messagebox
         try:
-            with self.adb_lock:
-                result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                
+            result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             output = result.stdout
             devices = self.parse_device_list(output)
             all_known_devices = set(devices)
@@ -626,9 +702,8 @@ class App:
             if self.connected_device is not None:
                 return
 
-            with self.adb_lock:
-                result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
@@ -638,7 +713,7 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
-                # --- MODIFIED: Trigger APK scan *after* connection is confirmed ---
+                # --- Trigger APK scan on new connection ---
                 self.master.after(0, self._scan_existing_apk_files)
                 
             elif result.returncode != 0:
@@ -652,10 +727,8 @@ class App:
         from tkinter import messagebox
         if not self.connected_device: return
         try:
-            with self.adb_lock:
-                result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                
+            result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode == 0:
                 device_id = self.connected_device
                 self.connected_device = None
@@ -682,8 +755,7 @@ class App:
     def check_adb(self):
         from tkinter import messagebox
         try:
-            with self.adb_lock:
-                subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             return True
         except FileNotFoundError:
             messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
@@ -694,8 +766,7 @@ class App:
     def start_adb_server(self):
         from tkinter import messagebox
         try:
-            with self.adb_lock:
-                subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
             messagebox.showerror("Error", f"Could not start ADB server:\n{e}")
             self.master.quit()
@@ -732,7 +803,7 @@ class App:
         if not self.connected_device:
             messagebox.showwarning("No Connection", "No device is currently connected.")
             return
-        threading.Thread(target=self.disconnect_device).start()
+        threading.Thread(target=self._disconnect_device).start()
 
     # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
@@ -907,26 +978,37 @@ class App:
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
         self.apk_file_map[filepath] = item_id
-        self.apk_install_queue.put((filepath, item_id))
+        threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
         
-    def _apk_install_worker(self):
-        """Worker thread that processes the APK install queue one by one."""
-        while True:
-            try:
-                item = self.apk_install_queue.get()
-                if item is None:
-                    print("Stopping APK worker thread.")
-                    break
-                
-                filepath, item_id = item
-                self._run_apk_install(filepath, item_id)
-                self.apk_install_queue.task_done()
-            except Exception as e:
-                print(f"Error in APK worker: {e}")
-        
+    def _get_device_version(self, pkg_name):
+        """Queries the connected device for the version code of a package."""
+        if not self.connected_device:
+            return 0
+            
+        try:
+            device_id = self.connected_device
+            command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
+            
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    if "versionCode=" in line:
+                        version_str = line.strip().split('versionCode=')[1]
+                        version_code = int(version_str.split(' ')[0])
+                        print(f"Found device version {version_code} for {pkg_name}")
+                        return version_code
+            
+            print(f"Package {pkg_name} not found on device.")
+            return 0 # Package not found
+        except Exception as e:
+            print(f"Error getting device version: {e}")
+            return 0
+
     def _run_apk_install(self, apk_path, item_id):
         self.master.after(0, self._update_apk_status, item_id, "Checking...")
         
+        # 1. Wait for file to be accessible
         for _ in range(5):
             try:
                 with open(apk_path, 'rb') as f: pass
@@ -944,6 +1026,7 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
 
+        # 2. Parse APK for package name and version
         try:
             apk = APK(apk_path)
             pkg_name = apk.package
@@ -955,11 +1038,11 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
+        # 3. Wait for a device to be connected (up to 10 sec)
         wait_time = 0
         while not self.connected_device and self.is_running and wait_time < 10:
             print(f"APK Install: Waiting for device... ({wait_time}s)")
-            if wait_time == 0:
-                self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
+            self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
             time.sleep(1)
             wait_time += 1
 
@@ -969,14 +1052,14 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
+        # 4. Get version from device
         device_version = self._get_device_version(pkg_name)
         
-        # --- MODIFIED: Add a short pause ---
-        time.sleep(0.5)
-        
+        # 5. Compare and decide
         try:
             install_needed = False
             install_reason = ""
+            status_tag = ""
             
             if device_version == 0:
                 install_needed = True
@@ -985,17 +1068,16 @@ class App:
                 install_needed = True
                 install_reason = f"Upgrading (v{device_version} -> v{pc_version})..."
             elif pc_version == device_version:
-                self.master.after(0, self._update_apk_status, item_id, f"Skipped (v{pc_version} installed)")
+                status_tag = f"Skipped (v{pc_version} installed)"
             else: # pc_version < device_version
-                self.master.after(0, self._update_apk_status, item_id, f"Skipped (Newer v{device_version} on device)")
+                status_tag = f"Skipped (Newer v{device_version})"
                 
             if install_needed:
                 self.master.after(0, self._update_apk_status, item_id, install_reason)
                 device_id = self.connected_device
                 command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
                 
-                with self.adb_lock:
-                    result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
                 
                 if "Success" in result.stdout:
                     self.master.after(0, self._update_apk_status, item_id, "Success")
@@ -1003,37 +1085,13 @@ class App:
                     error_message = (result.stdout or result.stderr).strip().split('\n')[-1]
                     if not error_message: error_message = "Unknown error"
                     self.master.after(0, self._update_apk_status, item_id, f"Error: {error_message}")
+            elif status_tag:
+                 self.master.after(0, self._update_apk_status, item_id, status_tag)
             
         except Exception as e:
             self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
         finally:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            
-    def _get_device_version(self, pkg_name):
-        """Queries the connected device for the version code of a package."""
-        if not self.connected_device:
-            return 0
-            
-        try:
-            device_id = self.connected_device
-            command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
-            
-            with self.adb_lock:
-                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-            
-            if result.stdout:
-                for line in result.stdout.splitlines():
-                    if "versionCode=" in line:
-                        version_str = line.strip().split('versionCode=')[1]
-                        version_code = int(version_str.split(' ')[0])
-                        print(f"Found device version {version_code} for {pkg_name}")
-                        return version_code
-            
-            print(f"Package {pkg_name} not found on device.")
-            return 0
-        except Exception as e:
-            print(f"Error getting device version: {e}")
-            return 0
             
     def _update_apk_status(self, item_id, status_message):
         try:
@@ -1047,7 +1105,7 @@ class App:
                 self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
             elif "Skipped" in status_message:
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('skipped',))
-            else:
+            else: # Any other message is an error
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
         except Exception as e:
             print(f"Error updating APK status in UI: {e}")
@@ -1071,17 +1129,14 @@ class App:
             self.apk_file_observer.stop()
             self.apk_file_observer.join()
             print("APK monitoring service stopped.")
-            
-        self.apk_install_queue.put(None)
 
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
         
         if self.connected_device:
             try:
-                with self.adb_lock:
-                    subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
         try:
