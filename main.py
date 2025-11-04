@@ -177,6 +177,7 @@ class App:
         self._setup_log_file()
         self._periodic_log_save()
         self._start_monitoring_services()
+        self._scan_existing_apk_files() # <-- NEW: Scan for existing files
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -459,7 +460,7 @@ class App:
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
                 self.api_log_text.tag_add('search', start_pos, end_pos)
-                self.api_log_text.tag_remove('current_search', '1.o', tk.END)
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
@@ -727,6 +728,7 @@ class App:
         config = configparser.ConfigParser()
         
         if not os.path.exists(config_path):
+            print(f"Error: Config file not found at {config_path}")
             messagebox.showerror("Config Error", f"Configuration file not found. Please create it at:\n{config_path}")
             return False
             
@@ -778,11 +780,32 @@ class App:
                 self.apk_file_observer.start()
                 print("APK monitoring service started.")
 
+    # --- NEW: Scan for existing APKs on startup ---
+    def _scan_existing_apk_files(self):
+        """Scans the APK monitor path for existing files on startup."""
+        if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path):
+            return # Path not set or doesn't exist
+
+        print(f"Scanning for existing APKs in: {self.apk_monitor_path}")
+        try:
+            for filename in os.listdir(self.apk_monitor_path):
+                if filename.endswith(".apk"):
+                    filepath = os.path.join(self.apk_monitor_path, filename)
+                    print(f"Found existing APK: {filepath}")
+                    # Add to monitor just like a new file
+                    # The processing lock will prevent duplicates if watchdog also fires
+                    self._add_apk_to_monitor(filepath)
+        except Exception as e:
+            print(f"Error scanning existing APKs: {e}")
+
     # --- Zip Service Methods ---
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
+        
+        if filepath in self.processing_files: return # Already queued
         self.processing_files.add(filepath) # Add to lock list
+        
         item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
         self.zip_file_map[filepath] = item_id
         threading.Thread(target=self.process_zip_file, args=(filepath,), daemon=True).start()
@@ -870,6 +893,10 @@ class App:
         import tkinter as tk
         filename = os.path.basename(filepath)
         
+        # Check lock
+        if filepath in self.apk_processing_files:
+            print(f"APK {filename} is already in the processing queue.")
+            return
         self.apk_processing_files.add(filepath)
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
