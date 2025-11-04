@@ -10,7 +10,7 @@ import shutil
 import configparser # Using configparser for .ini files
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from tkinter import filedialog 
+from tkinter import filedialog, messagebox # Added messagebox
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -64,7 +64,7 @@ class ApkFileHandler(FileSystemEventHandler):
 class App:
     def __init__(self, master, lock_file_path):
         import tkinter as tk
-        from tkinter import ttk, messagebox, scrolledtext
+        from tkinter import ttk, scrolledtext
         from PIL import ImageTk
 
         self.master = master
@@ -97,7 +97,7 @@ class App:
         # --- APK Monitor ---
         self.apk_processed_count = 0
         self.apk_file_map = {}
-        self.apk_processing_files = set() # NEW: Lock for APKs
+        self.apk_processing_files = set()
         
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
@@ -459,7 +459,7 @@ class App:
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
                 self.api_log_text.tag_add('search', start_pos, end_pos)
-                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+                self.api_log_text.tag_remove('current_search', '1.o', tk.END)
                 self.api_log_text.tag_add('current_search', start_pos, end_pos)
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
@@ -722,10 +722,12 @@ class App:
     # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
         """Loads paths from config.ini using configparser."""
+        from tkinter import messagebox
         config_path = os.path.join(self.base_path, "configs", "config.ini")
         config = configparser.ConfigParser()
+        
         if not os.path.exists(config_path):
-            print(f"Error: Config file not found at {config_path}")
+            messagebox.showerror("Config Error", f"Configuration file not found. Please create it at:\n{config_path}")
             return False
             
         try:
@@ -735,26 +737,26 @@ class App:
             try:
                 self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
                 if not os.path.exists(self.zip_monitor_path):
-                    print(f"Warning: Configured Zip Outbox path does not exist: {self.zip_monitor_path}")
+                    messagebox.showwarning("Config Warning", f"The Zip monitor path does not exist:\n{self.zip_monitor_path}\n\nThe Zip service will not start.")
                 else:
                     print(f"Monitoring Zip Outbox path: {self.zip_monitor_path}")
             except KeyError:
-                print("Error: DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini")
+                messagebox.showerror("Config Error", "DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini")
                 
             # Load APK monitor path
             try:
                 self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
                 if not os.path.exists(self.apk_monitor_path):
-                    print(f"Warning: Configured APK Monitor path does not exist: {self.apk_monitor_path}")
+                    messagebox.showwarning("Config Warning", f"The APK monitor path does not exist:\n{self.apk_monitor_path}\n\nThe APK service will not start.")
                 else:
                     print(f"Monitoring APK path: {self.apk_monitor_path}")
             except KeyError:
-                print("Error: MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
+                messagebox.showerror("Config Error", "MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
                 
             return True
             
         except Exception as e:
-            print(f"Error loading config.ini file: {e}")
+            messagebox.showerror("Config Error", f"Error loading config.ini file: {e}")
             return False
 
     def _start_monitoring_services(self):
@@ -868,7 +870,6 @@ class App:
         import tkinter as tk
         filename = os.path.basename(filepath)
         
-        # Add to processing list to prevent duplicates
         self.apk_processing_files.add(filepath)
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
@@ -887,17 +888,17 @@ class App:
             except FileNotFoundError:
                 print(f"APK {apk_path} disappeared, aborting.")
                 self.master.after(0, self._update_apk_status, item_id, "Error: File disappeared")
-                self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
+                self.master.after(0, self._remove_from_apk_processing_list, apk_path)
                 return
         else:
             print(f"Failed to access file {apk_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_apk_status, item_id, "Error: File locked")
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
         if not self.connected_device:
             self.master.after(0, self._update_apk_status, item_id, "Error: No device")
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
         try:
@@ -916,7 +917,7 @@ class App:
         except Exception as e:
             self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
         finally:
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             
     def _update_apk_status(self, item_id, status_message):
         try:
