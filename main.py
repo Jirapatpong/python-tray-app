@@ -7,7 +7,7 @@ import time
 import queue
 import zipfile
 import shutil
-import configparser # New: Replaces yaml
+import configparser # Using configparser for .ini files
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog 
@@ -39,17 +39,27 @@ class ZipFileHandler(FileSystemEventHandler):
             print(f"New zip file detected: {event.src_path}")
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
-# --- NEW: Handler for the APK file monitoring service ---
+# --- Handler for the APK file monitoring service ---
 class ApkFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
 
-    def on_created(self, event):
-        """Called when an APK file is created."""
+    def process_event(self, event):
+        """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
-            print(f"New APK file detected: {event.src_path}")
-            # Schedule adding the file to the UI monitor on the main thread
+            # Check if this file is already being processed
+            if event.src_path in self.app.apk_processing_files:
+                return # Ignore, already in the queue or processing
+            
+            print(f"New APK file event ({event.event_type}): {event.src_path}")
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
+
+    def on_created(self, event):
+        self.process_event(event)
+        
+    def on_modified(self, event):
+        # This catches files that are "pasted" or slowly copied
+        self.process_event(event)
 
 class App:
     def __init__(self, master, lock_file_path):
@@ -77,16 +87,17 @@ class App:
         self.zip_monitor_path = None
         self.apk_monitor_path = None
         self.zip_file_observer = None
-        self.apk_file_observer = None # New observer for APKs
+        self.apk_file_observer = None
         
-        # --- Zip Monitor UI ---
+        # --- Zip Monitor ---
         self.zip_processed_count = 0
         self.zip_file_map = {}
         self.processing_files = set()
         
-        # --- APK Monitor UI ---
+        # --- APK Monitor ---
         self.apk_processed_count = 0
-        self.apk_file_map = {} # Maps filepath to Treeview item ID
+        self.apk_file_map = {}
+        self.apk_processing_files = set() # NEW: Lock for APKs
         
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
@@ -165,7 +176,7 @@ class App:
         self.start_api_exe()
         self._setup_log_file()
         self._periodic_log_save()
-        self._start_monitoring_services() # Renamed method
+        self._start_monitoring_services()
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -226,7 +237,7 @@ class App:
         self.api_tab_btn.pack(side='left', padx=1)
         self.zip_tab_btn = ttk.Button(tab_container, text="Zip Monitor", style='Tab.TButton', command=lambda: self.switch_tab('zip'))
         self.zip_tab_btn.pack(side='left', padx=1)
-        self.apk_tab_btn = ttk.Button(tab_container, text="APK Monitor", style='Tab.TButton', command=lambda: self.switch_tab('apk')) # Renamed
+        self.apk_tab_btn = ttk.Button(tab_container, text="APK Monitor", style='Tab.TButton', command=lambda: self.switch_tab('apk'))
         self.apk_tab_btn.pack(side='left', padx=1)
         
         shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
@@ -306,7 +317,7 @@ class App:
         self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         
-        # --- NEW: Frame 4: APK Monitor (Replaces Installer) ---
+        # Frame 4: APK Monitor
         self.apk_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
         self.apk_frame.grid(row=0, column=0, sticky='nsew')
         self.apk_frame.grid_rowconfigure(1, weight=1)
@@ -326,7 +337,7 @@ class App:
         self.apk_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
 
-        self.switch_tab('device') # Start on the first tab
+        self.switch_tab('device')
 
     # --- Log File Methods ---
     def _setup_log_file(self):
@@ -852,27 +863,21 @@ class App:
                 shutil.rmtree(temp_extract_dir)
             self.master.after(0, self._remove_from_processing_list, zip_path) 
             
-    # --- NEW: APK Installer Methods ---
+    # --- APK Installer Methods ---
     def _add_apk_to_monitor(self, filepath):
-        """Adds a new file to the APK Monitor UI and starts processing."""
         import tkinter as tk
         filename = os.path.basename(filepath)
         
-        # Add to Treeview and get its unique item ID
+        # Add to processing list to prevent duplicates
+        self.apk_processing_files.add(filepath)
+        
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
-        
-        # Store the item ID for later updates
         self.apk_file_map[filepath] = item_id
-        
-        # Start the processing in a background thread
         threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
         
     def _run_apk_install(self, apk_path, item_id):
-        """Worker thread for running the 'adb install' command."""
-        
         self.master.after(0, self._update_apk_status, item_id, "Processing")
         
-        # Wait for file to be fully copied
         for _ in range(5):
             try:
                 with open(apk_path, 'rb') as f: pass
@@ -882,14 +887,17 @@ class App:
             except FileNotFoundError:
                 print(f"APK {apk_path} disappeared, aborting.")
                 self.master.after(0, self._update_apk_status, item_id, "Error: File disappeared")
+                self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
                 return
         else:
             print(f"Failed to access file {apk_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_apk_status, item_id, "Error: File locked")
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
             return
             
         if not self.connected_device:
             self.master.after(0, self._update_apk_status, item_id, "Error: No device")
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
             return
             
         try:
@@ -907,9 +915,10 @@ class App:
 
         except Exception as e:
             self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
+        finally:
+            self.master.after(0, self._remove_from_apk_processing_list, apk_path) # Remove lock
             
     def _update_apk_status(self, item_id, status_message):
-        """Updates the APK status label on the main UI thread."""
         try:
             filename = self.apk_tree.item(item_id, 'values')[0]
             
@@ -920,22 +929,26 @@ class App:
                 self.apk_processed_count += 1
                 self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
             else:
-                # Any other message is an error
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
         except Exception as e:
             print(f"Error updating APK status in UI: {e}")
             
+    def _remove_from_apk_processing_list(self, filepath):
+        """Removes an APK from the processing set once done/failed."""
+        if filepath in self.apk_processing_files:
+            self.apk_processing_files.remove(filepath)
+            
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log() # Final save
+        self._auto_save_log()
         
         if self.zip_file_observer:
             self.zip_file_observer.stop()
             self.zip_file_observer.join()
             print("Zip monitoring service stopped.")
 
-        if self.apk_file_observer: # Stop new observer
+        if self.apk_file_observer:
             self.apk_file_observer.stop()
             self.apk_file_observer.join()
             print("APK monitoring service stopped.")
