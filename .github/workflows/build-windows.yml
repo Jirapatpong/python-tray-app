@@ -35,13 +35,14 @@ jobs:
         run: python make_icon.py
 
       # 5. Bundles the application into a single .exe file using PyInstaller
-      #    --additional-hooks-dir tells PyInstaller to look in our 'hooks' folder
+      #    --name flag sets the output executable name
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm --clean --onefile --noconsole --icon=icon.ico --additional-hooks-dir=hooks main.py
+        run: pyinstaller --noconfirm --clean --onefile --noconsole --icon=icon.ico --additional-hooks-dir=hooks --name="HHT Android Connect" main.py
 
       # 6. Uploads the final .exe file as a downloadable artifact
+      #    Updated path to match the new name
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: HHT-Android-Connect-EXE
-          path: dist/main.exe # Path to the specific file to upload
+          path: dist/HHT Android Connect.exe
