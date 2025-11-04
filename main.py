@@ -11,7 +11,7 @@ import configparser # Using configparser for .ini files
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
-from pyaxmlparser import APK # New: For parsing APK files
+from pyaxmlparser import APK
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
@@ -94,6 +94,9 @@ class App:
         self.apk_file_map = {}
         self.apk_processing_files = set()
         
+        # --- NEW: Queue for single-file APK installs ---
+        self.apk_install_queue = queue.Queue()
+        
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -168,6 +171,11 @@ class App:
         self.start_api_exe()
         self._setup_log_file()
         self._periodic_log_save()
+        
+        # --- NEW: Start the APK install worker thread ---
+        self.apk_worker_thread = threading.Thread(target=self._apk_install_worker, daemon=True)
+        self.apk_worker_thread.start()
+        
         self._start_monitoring_services()
         self._scan_existing_apk_files()
 
@@ -329,7 +337,7 @@ class App:
         self.apk_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
-        self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic')) # New tag
+        self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
 
         self.switch_tab('device')
 
@@ -625,7 +633,7 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
-                # --- NEW: Trigger APK scan on new connection ---
+                # --- Trigger APK scan on new connection ---
                 self.master.after(0, self._scan_existing_apk_files)
                 
             elif result.returncode != 0:
@@ -890,39 +898,29 @@ class App:
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
         self.apk_file_map[filepath] = item_id
-        threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
-
-    # --- NEW: Helper to get device version ---
-    def _get_device_version(self, pkg_name):
-        """Queries the connected device for the version code of a package."""
-        if not self.connected_device:
-            return 0 # No device, so version is 0
-            
-        try:
-            device_id = self.connected_device
-            command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
-            
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-            
-            if result.stdout:
-                for line in result.stdout.splitlines():
-                    if "versionCode=" in line:
-                        # Line is like "    versionCode=123 minSdk=21 targetSdk=30"
-                        version_str = line.strip().split('versionCode=')[1]
-                        version_code = int(version_str.split(' ')[0])
-                        print(f"Found device version {version_code} for {pkg_name}")
-                        return version_code
-            
-            print(f"Package {pkg_name} not found on device.")
-            return 0 # Package not found
-        except Exception as e:
-            print(f"Error getting device version: {e}")
-            return 0 # Error, assume not installed
-
+        # --- MODIFIED: Add to queue instead of starting thread ---
+        self.apk_install_queue.put((filepath, item_id))
+        
+    def _apk_install_worker(self):
+        """Worker thread that processes the APK install queue one by one."""
+        while True:
+            try:
+                item = self.apk_install_queue.get()
+                if item is None:
+                    print("Stopping APK worker thread.")
+                    break # Exit loop on poison pill
+                
+                filepath, item_id = item
+                # This is the original install function, now called sequentially
+                self._run_apk_install(filepath, item_id)
+                self.apk_install_queue.task_done()
+            except Exception as e:
+                print(f"Error in APK worker: {e}")
+        
     def _run_apk_install(self, apk_path, item_id):
+        """Processes a single APK installation. Called by the worker thread."""
         self.master.after(0, self._update_apk_status, item_id, "Checking...")
         
-        # 1. Wait for file to be accessible
         for _ in range(5):
             try:
                 with open(apk_path, 'rb') as f: pass
@@ -940,7 +938,6 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
 
-        # 2. Parse APK for package name and version
         try:
             apk = APK(apk_path)
             pkg_name = apk.package
@@ -952,11 +949,11 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
-        # 3. Wait for a device to be connected (up to 10 sec)
         wait_time = 0
         while not self.connected_device and self.is_running and wait_time < 10:
             print(f"APK Install: Waiting for device... ({wait_time}s)")
-            self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
+            if wait_time == 0: # Only update UI on the first wait
+                self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
             time.sleep(1)
             wait_time += 1
 
@@ -966,10 +963,8 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
-        # 4. Get version from device
         device_version = self._get_device_version(pkg_name)
         
-        # 5. Compare and decide
         try:
             install_needed = False
             install_reason = ""
@@ -1004,6 +999,31 @@ class App:
         finally:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             
+    def _get_device_version(self, pkg_name):
+        """Queries the connected device for the version code of a package."""
+        if not self.connected_device:
+            return 0
+            
+        try:
+            device_id = self.connected_device
+            command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
+            
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    if "versionCode=" in line:
+                        version_str = line.strip().split('versionCode=')[1]
+                        version_code = int(version_str.split(' ')[0])
+                        print(f"Found device version {version_code} for {pkg_name}")
+                        return version_code
+            
+            print(f"Package {pkg_name} not found on device.")
+            return 0
+        except Exception as e:
+            print(f"Error getting device version: {e}")
+            return 0
+            
     def _update_apk_status(self, item_id, status_message):
         try:
             filename = self.apk_tree.item(item_id, 'values')[0]
@@ -1016,7 +1036,7 @@ class App:
                 self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
             elif "Skipped" in status_message:
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('skipped',))
-            else: # Any other message is an error
+            else:
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
         except Exception as e:
             print(f"Error updating APK status in UI: {e}")
@@ -1040,6 +1060,9 @@ class App:
             self.apk_file_observer.stop()
             self.apk_file_observer.join()
             print("APK monitoring service stopped.")
+            
+        # --- NEW: Send 'None' to stop the APK worker thread ---
+        self.apk_install_queue.put(None)
 
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
