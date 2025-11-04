@@ -96,7 +96,6 @@ class App:
         
         self.apk_install_queue = queue.Queue()
         
-        # --- NEW: Global lock for all ADB commands ---
         self.adb_lock = threading.Lock()
         
         if getattr(sys, 'frozen', False):
@@ -178,7 +177,8 @@ class App:
         self.apk_worker_thread.start()
         
         self._start_monitoring_services()
-        self._scan_existing_apk_files()
+        # --- REMOVED APK scan from startup ---
+        # self._scan_existing_apk_files()
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -555,12 +555,10 @@ class App:
     def device_monitor_loop(self):
         while self.is_running:
             try:
-                # --- ADB LOCK: Acquire ---
                 with self.adb_lock:
                     result = subprocess.run([self.ADB_PATH, "devices"], 
                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                             text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                # --- ADB LOCK: Release ---
                 
                 current_devices = set(self.parse_device_list(result.stdout))
 
@@ -607,10 +605,8 @@ class App:
     def _refresh_devices(self):
         from tkinter import messagebox
         try:
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
                 
             output = result.stdout
             devices = self.parse_device_list(output)
@@ -630,11 +626,9 @@ class App:
             if self.connected_device is not None:
                 return
 
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
             
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
@@ -644,6 +638,7 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
+                # --- MODIFIED: Trigger APK scan *after* connection is confirmed ---
                 self.master.after(0, self._scan_existing_apk_files)
                 
             elif result.returncode != 0:
@@ -657,11 +652,9 @@ class App:
         from tkinter import messagebox
         if not self.connected_device: return
         try:
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
                 
             if result.returncode == 0:
                 device_id = self.connected_device
@@ -689,10 +682,8 @@ class App:
     def check_adb(self):
         from tkinter import messagebox
         try:
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
             return True
         except FileNotFoundError:
             messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
@@ -703,10 +694,8 @@ class App:
     def start_adb_server(self):
         from tkinter import messagebox
         try:
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
         except Exception as e:
             messagebox.showerror("Error", f"Could not start ADB server:\n{e}")
             self.master.quit()
@@ -743,7 +732,7 @@ class App:
         if not self.connected_device:
             messagebox.showwarning("No Connection", "No device is currently connected.")
             return
-        threading.Thread(target=self._disconnect_device).start()
+        threading.Thread(target=self.disconnect_device).start()
 
     # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
@@ -982,6 +971,9 @@ class App:
             
         device_version = self._get_device_version(pkg_name)
         
+        # --- MODIFIED: Add a short pause ---
+        time.sleep(0.5)
+        
         try:
             install_needed = False
             install_reason = ""
@@ -1002,10 +994,8 @@ class App:
                 device_id = self.connected_device
                 command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
                 
-                # --- ADB LOCK: Acquire ---
                 with self.adb_lock:
                     result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-                # --- ADB LOCK: Release ---
                 
                 if "Success" in result.stdout:
                     self.master.after(0, self._update_apk_status, item_id, "Success")
@@ -1028,10 +1018,8 @@ class App:
             device_id = self.connected_device
             command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
             
-            # --- ADB LOCK: Acquire ---
             with self.adb_lock:
                 result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-            # --- ADB LOCK: Release ---
             
             if result.stdout:
                 for line in result.stdout.splitlines():
@@ -1091,11 +1079,9 @@ class App:
         
         if self.connected_device:
             try:
-                # --- ADB LOCK: Acquire ---
                 with self.adb_lock:
                     subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                # --- ADB LOCK: Release ---
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
         try:
