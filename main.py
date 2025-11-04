@@ -177,7 +177,7 @@ class App:
         self._setup_log_file()
         self._periodic_log_save()
         self._start_monitoring_services()
-        self._scan_existing_apk_files() # <-- NEW: Scan for existing files
+        self._scan_existing_apk_files()
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -780,7 +780,7 @@ class App:
                 self.apk_file_observer.start()
                 print("APK monitoring service started.")
 
-    # --- NEW: Scan for existing APKs on startup ---
+    # --- Scan for existing APKs on startup ---
     def _scan_existing_apk_files(self):
         """Scans the APK monitor path for existing files on startup."""
         if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path):
@@ -906,6 +906,7 @@ class App:
     def _run_apk_install(self, apk_path, item_id):
         self.master.after(0, self._update_apk_status, item_id, "Processing")
         
+        # --- FIX: Wait for file access ---
         for _ in range(5):
             try:
                 with open(apk_path, 'rb') as f: pass
@@ -923,7 +924,15 @@ class App:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
             
+        # --- FIX: Wait for device connection ---
+        wait_time = 0
+        while not self.connected_device and self.is_running and wait_time < 10:
+            print(f"APK Install: Waiting for device... ({wait_time}s)")
+            time.sleep(1)
+            wait_time += 1
+
         if not self.connected_device:
+            print("APK Install: Timed out waiting for device.")
             self.master.after(0, self._update_apk_status, item_id, "Error: No device")
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
