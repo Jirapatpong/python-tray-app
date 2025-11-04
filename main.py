@@ -94,8 +94,10 @@ class App:
         self.apk_file_map = {}
         self.apk_processing_files = set()
         
-        # --- NEW: Queue for single-file APK installs ---
         self.apk_install_queue = queue.Queue()
+        
+        # --- NEW: Global lock for all ADB commands ---
+        self.adb_lock = threading.Lock()
         
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
@@ -172,7 +174,6 @@ class App:
         self._setup_log_file()
         self._periodic_log_save()
         
-        # --- NEW: Start the APK install worker thread ---
         self.apk_worker_thread = threading.Thread(target=self._apk_install_worker, daemon=True)
         self.apk_worker_thread.start()
         
@@ -554,9 +555,12 @@ class App:
     def device_monitor_loop(self):
         while self.is_running:
             try:
-                result = subprocess.run([self.ADB_PATH, "devices"], 
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                        text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Acquire ---
+                with self.adb_lock:
+                    result = subprocess.run([self.ADB_PATH, "devices"], 
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                            text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Release ---
                 
                 current_devices = set(self.parse_device_list(result.stdout))
 
@@ -603,7 +607,11 @@ class App:
     def _refresh_devices(self):
         from tkinter import messagebox
         try:
-            result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
+                
             output = result.stdout
             devices = self.parse_device_list(output)
             all_known_devices = set(devices)
@@ -622,8 +630,11 @@ class App:
             if self.connected_device is not None:
                 return
 
-            result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
             
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
@@ -633,7 +644,6 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
-                # --- Trigger APK scan on new connection ---
                 self.master.after(0, self._scan_existing_apk_files)
                 
             elif result.returncode != 0:
@@ -647,8 +657,12 @@ class App:
         from tkinter import messagebox
         if not self.connected_device: return
         try:
-            result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
+                
             if result.returncode == 0:
                 device_id = self.connected_device
                 self.connected_device = None
@@ -675,7 +689,10 @@ class App:
     def check_adb(self):
         from tkinter import messagebox
         try:
-            subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
             return True
         except FileNotFoundError:
             messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
@@ -686,7 +703,10 @@ class App:
     def start_adb_server(self):
         from tkinter import messagebox
         try:
-            subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
         except Exception as e:
             messagebox.showerror("Error", f"Could not start ADB server:\n{e}")
             self.master.quit()
@@ -898,7 +918,6 @@ class App:
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
         self.apk_file_map[filepath] = item_id
-        # --- MODIFIED: Add to queue instead of starting thread ---
         self.apk_install_queue.put((filepath, item_id))
         
     def _apk_install_worker(self):
@@ -908,17 +927,15 @@ class App:
                 item = self.apk_install_queue.get()
                 if item is None:
                     print("Stopping APK worker thread.")
-                    break # Exit loop on poison pill
+                    break
                 
                 filepath, item_id = item
-                # This is the original install function, now called sequentially
                 self._run_apk_install(filepath, item_id)
                 self.apk_install_queue.task_done()
             except Exception as e:
                 print(f"Error in APK worker: {e}")
         
     def _run_apk_install(self, apk_path, item_id):
-        """Processes a single APK installation. Called by the worker thread."""
         self.master.after(0, self._update_apk_status, item_id, "Checking...")
         
         for _ in range(5):
@@ -952,7 +969,7 @@ class App:
         wait_time = 0
         while not self.connected_device and self.is_running and wait_time < 10:
             print(f"APK Install: Waiting for device... ({wait_time}s)")
-            if wait_time == 0: # Only update UI on the first wait
+            if wait_time == 0:
                 self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
             time.sleep(1)
             wait_time += 1
@@ -985,7 +1002,10 @@ class App:
                 device_id = self.connected_device
                 command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
                 
-                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Acquire ---
+                with self.adb_lock:
+                    result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Release ---
                 
                 if "Success" in result.stdout:
                     self.master.after(0, self._update_apk_status, item_id, "Success")
@@ -1008,7 +1028,10 @@ class App:
             device_id = self.connected_device
             command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
             
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Acquire ---
+            with self.adb_lock:
+                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
+            # --- ADB LOCK: Release ---
             
             if result.stdout:
                 for line in result.stdout.splitlines():
@@ -1061,7 +1084,6 @@ class App:
             self.apk_file_observer.join()
             print("APK monitoring service stopped.")
             
-        # --- NEW: Send 'None' to stop the APK worker thread ---
         self.apk_install_queue.put(None)
 
         if self.tray_icon: self.tray_icon.stop()
@@ -1069,8 +1091,11 @@ class App:
         
         if self.connected_device:
             try:
-                subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Acquire ---
+                with self.adb_lock:
+                    subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                # --- ADB LOCK: Release ---
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
         try:
