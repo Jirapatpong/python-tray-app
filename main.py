@@ -8,7 +8,7 @@ import queue
 import zipfile
 import shutil
 import configparser # Using configparser for .ini files
-import datetime # New: For log date management
+import datetime # For log date management
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -85,8 +85,8 @@ class App:
         
         # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        self.log_dir = None # New: Store log directory
-        self.current_log_date = None # New: Track current log date
+        self.log_dir = None # Store log directory
+        self.current_log_date = None # Track current log date
         self.zip_monitor_path = None
         self.apk_monitor_path = None
         self.zip_file_observer = None
@@ -177,7 +177,7 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        self._setup_log_file() # This now cleans logs, sets path, and loads today's log
+        self._setup_log_file()
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
@@ -699,9 +699,8 @@ class App:
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
-            if self.connected_device is not None:
-                return
-
+            # We removed the old "if self.connected_device is not None" check from here
+            
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             
@@ -793,17 +792,27 @@ class App:
             return
         device_details = self.device_tree.item(selected_item)
         selected_device = device_details['values'][0]
+
         if self.connected_device == selected_device:
             messagebox.showinfo("Already Connected", f"Device {selected_device} is already connected.")
             return
-        threading.Thread(target=self._connect_device, args=(selected_device,)).start()
+        
+        # --- "FRIENDLY" CHECK ---
+        if self.connected_device is not None:
+            messagebox.showwarning("Device Already Connected", 
+                                  f"Device {self.connected_device} is already connected.\n\n"
+                                  f"Please click 'Disconnect' first before connecting a new device.")
+            return
+        # --- END CHECK ---
+        
+        threading.Thread(target=self._connect_device, args=(selected_device,), daemon=True).start()
 
     def disconnect_device(self):
         from tkinter import messagebox
         if not self.connected_device:
             messagebox.showwarning("No Connection", "No device is currently connected.")
             return
-        threading.Thread(target=self._disconnect_device).start()
+        threading.Thread(target=self._disconnect_device, daemon=True).start()
 
     # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
