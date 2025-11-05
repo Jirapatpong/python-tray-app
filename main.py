@@ -955,19 +955,47 @@ class App:
             return
 
         temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
-        original_filename = os.path.basename(zip_path)
+        original_filename_with_ext = os.path.basename(zip_path)
+        original_dir = os.path.dirname(zip_path)
         
         try:
+            # --- RENAMING LOGIC ---
+            filename_no_ext = original_filename_with_ext.replace('.zip', '')
+            filename_parts = filename_no_ext.split('-')
+            new_zip_path = zip_path
+            
+            if len(filename_parts) == 5: # This is the "short" name we need to fix
+                part_prefix = filename_parts[0]  # PTG
+                part_branch = filename_parts[1]  # 3081
+                part_zero = filename_parts[2]    # 0000
+                part_date = filename_parts[3]    # 251105
+                part_time = filename_parts[4]    # 195912
+                part_export_date = time.strftime("%y%m%d") 
+                new_filename = f"{part_prefix}-{part_branch}-{part_zero}-{part_date}-{part_export_date}-{part_time}.zip"
+                new_zip_path = os.path.join(original_dir, new_filename)
+                print(f"Original name: {original_filename_with_ext}, New name: {new_filename}")
+            
+            elif len(filename_parts) == 6: # It's already in the correct format
+                print(f"Filename {original_filename_with_ext} is already in the correct format.")
+                new_zip_path = zip_path
+            
+            else: # Unknown format
+                print(f"Warning: Unknown filename format '{original_filename_with_ext}'. Re-zipping with original name.")
+                new_zip_path = zip_path
+            # --- END RENAMING LOGIC ---
+
+            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
-            print(f"Unzipped '{original_filename}'")
+            print(f"Unzipped '{original_filename_with_ext}'")
 
+            # 2. Delete original
             os.remove(zip_path)
             print(f"Removed original: {zip_path}")
 
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
-                # --- FIX: Add directory entries first ---
+            # 3. Re-zip with the NEW name, adding directory entries
+            with zipfile.ZipFile(new_zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, dirs, files in os.walk(temp_extract_dir):
                     # Add directory entries
                     for d in dirs:
@@ -992,9 +1020,9 @@ class App:
                         zinfo.external_attr = (0o644 << 16) 
                         
                         with open(file_path, "rb") as source:
-                            zip_ref.writestr(zinfo, source.read())
+                            zip_ref.writestr(zinfo, source.read()) 
             
-            print(f"Successfully re-packaged with Unix Host OS & standard paths: {zip_path}")
+            print(f"Successfully re-packaged to: {new_zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
 
         except Exception as e:
@@ -1002,6 +1030,7 @@ class App:
             self.master.after(0, self._update_zip_status, item_id, "Error")
         
         finally:
+            # 4. Clean up
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
             self.master.after(0, self._remove_from_processing_list, zip_path) 
