@@ -49,8 +49,6 @@ class ApkFileHandler(FileSystemEventHandler):
     def process_event(self, event):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
-            
-            # --- FIX: Check both session map and processing queue ---
             # Check 1: Have we *ever* seen this file this session?
             if event.src_path in self.app.apk_file_map:
                 print(f"Ignoring duplicate event for already processed file: {event.src_path}")
@@ -60,7 +58,6 @@ class ApkFileHandler(FileSystemEventHandler):
             if event.src_path in self.app.apk_processing_files:
                 print(f"Ignoring duplicate event for file in queue: {event.src_path}")
                 return
-            # --- END FIX ---
             
             print(f"New APK file event ({event.event_type}): {event.src_path}")
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
@@ -675,6 +672,9 @@ class App:
             self.update_tray_status()
             self.is_disconnecting = False
             self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
+            
+            # --- NEW: Clear APK list on disconnect ---
+            self.master.after(0, self._clear_apk_monitor)
         
     def _update_device_tree(self, all_known_devices):
         import tkinter as tk
@@ -708,8 +708,6 @@ class App:
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
-            # We removed the old "if self.connected_device is not None" check from here
-            
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             
@@ -721,7 +719,8 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
-                # --- Trigger APK scan on new connection ---
+                # --- NEW: Clear list, then scan for APKs ---
+                self.master.after(0, self._clear_apk_monitor)
                 self.master.after(0, self._scan_existing_apk_files)
                 
             elif result.returncode != 0:
@@ -744,6 +743,10 @@ class App:
                 self.refresh_devices()
                 self.update_tray_status()
                 self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
+                
+                # --- NEW: Clear APK list on disconnect ---
+                self._clear_apk_monitor()
+                
             else:
                 messagebox.showerror("Error", f"Failed to disconnect:\n{result.stderr}")
         except Exception as e:
@@ -889,8 +892,10 @@ class App:
             for filename in os.listdir(self.apk_monitor_path):
                 if filename.endswith(".apk"):
                     filepath = os.path.join(self.apk_monitor_path, filename)
-                    print(f"Found existing APK: {filepath}")
-                    self._add_apk_to_monitor(filepath)
+                    # --- FIX: Check if already in map before adding ---
+                    if filepath not in self.apk_file_map and filepath not in self.apk_processing_files:
+                        print(f"Found existing APK: {filepath}")
+                        self._add_apk_to_monitor(filepath)
         except Exception as e:
             print(f"Error scanning existing APKs: {e}")
 
@@ -985,6 +990,28 @@ class App:
             self.master.after(0, self._remove_from_processing_list, zip_path) 
             
     # --- APK Installer Methods ---
+    
+    # --- NEW: Helper function to clear the APK monitor ---
+    def _clear_apk_monitor(self):
+        """Clears the APK monitor list and resets the state."""
+        print("Clearing APK Monitor...")
+        # Clear the visual list
+        try:
+            for item in self.apk_tree.get_children():
+                self.apk_tree.delete(item)
+        except Exception as e:
+            print(f"Error clearing APK tree (window might be closing): {e}")
+        
+        # Reset the internal tracking
+        self.apk_processed_count = 0
+        self.apk_file_map.clear()
+        self.apk_processing_files.clear()
+        
+        try:
+            self.apk_count_label.config(text="Total APKs Processed: 0")
+        except Exception as e:
+            print(f"Error resetting APK count label (window might be closing): {e}")
+
     def _add_apk_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
@@ -1116,6 +1143,10 @@ class App:
             
     def _update_apk_status(self, item_id, status_message):
         try:
+            # Check if item still exists in the tree
+            if not self.apk_tree.exists(item_id):
+                return # It was cleared, no need to update
+                
             filename = self.apk_tree.item(item_id, 'values')[0]
             
             if "Processing" in status_message or "Installing" in status_message or "Upgrading" in status_message or "Waiting" in status_message:
@@ -1129,7 +1160,7 @@ class App:
             else: # Any other message is an error
                 self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
         except Exception as e:
-            print(f"Error updating APK status in UI: {e}")
+            print(f"Error updating APK status in UI (item may be gone): {e}")
             
     def _remove_from_apk_processing_list(self, filepath):
         """Removes an APK from the processing set once done/failed."""
