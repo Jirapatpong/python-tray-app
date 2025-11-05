@@ -49,9 +49,18 @@ class ApkFileHandler(FileSystemEventHandler):
     def process_event(self, event):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
-            # Check if this file is already being processed
+            
+            # --- FIX: Check both session map and processing queue ---
+            # Check 1: Have we *ever* seen this file this session?
+            if event.src_path in self.app.apk_file_map:
+                print(f"Ignoring duplicate event for already processed file: {event.src_path}")
+                return
+            
+            # Check 2: Is this file *currently* in the queue?
             if event.src_path in self.app.apk_processing_files:
-                return # Ignore, already in the queue or processing
+                print(f"Ignoring duplicate event for file in queue: {event.src_path}")
+                return
+            # --- END FIX ---
             
             print(f"New APK file event ({event.event_type}): {event.src_path}")
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
@@ -649,7 +658,7 @@ class App:
                     newly_connected = current_devices - self.known_devices
                     if newly_connected:
                         device_to_connect = newly_connected.pop()
-                        threading.Thread(target=self._connect_device, args=(device_to_connect,)).start()
+                        threading.Thread(target=self._connect_device, args=(device_to_connect,), daemon=True).start()
                 
                 self.known_devices = current_devices
             except Exception as e:
@@ -772,7 +781,7 @@ class App:
 
     def refresh_devices(self):
         self.refresh_button.config(state='normal')
-        threading.Thread(target=self._refresh_devices).start()
+        threading.Thread(target=self._refresh_devices, daemon=True).start()
 
     def parse_device_list(self, adb_output):
         devices = []
@@ -980,13 +989,16 @@ class App:
         import tkinter as tk
         filename = os.path.basename(filepath)
         
-        if filepath in self.apk_processing_files:
-            print(f"APK {filename} is already in the processing queue.")
-            return
+        # This is the fix: Add to session map (apk_file_map) first
+        # This prevents the file event from adding it twice
+        if filepath in self.apk_file_map:
+             print(f"APK {filename} is already in the processing queue or done.")
+             return
+        
         self.apk_processing_files.add(filepath)
         
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
-        self.apk_file_map[filepath] = item_id
+        self.apk_file_map[filepath] = item_id # Add to *session* lock
         threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
         
     def _get_device_version(self, pkg_name):
