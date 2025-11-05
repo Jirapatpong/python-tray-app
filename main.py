@@ -49,6 +49,7 @@ class ApkFileHandler(FileSystemEventHandler):
     def process_event(self, event):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
+            
             # Check 1: Have we *ever* seen this file this session?
             if event.src_path in self.app.apk_file_map:
                 print(f"Ignoring duplicate event for already processed file: {event.src_path}")
@@ -673,7 +674,7 @@ class App:
             self.is_disconnecting = False
             self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
             
-            # --- NEW: Clear APK list on disconnect ---
+            # --- Clear APK list on disconnect ---
             self.master.after(0, self._clear_apk_monitor)
         
     def _update_device_tree(self, all_known_devices):
@@ -719,9 +720,9 @@ class App:
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
                 
-                # --- NEW: Clear list, then scan for APKs ---
+                # --- Clear list, then scan for APKs ---
                 self.master.after(0, self._clear_apk_monitor)
-                self.master.after(0, self._scan_existing_apk_files)
+                self.master.after(100, self._scan_existing_apk_files) # Added small delay
                 
             elif result.returncode != 0:
                 self.master.after(0, lambda: messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}"))
@@ -744,7 +745,7 @@ class App:
                 self.update_tray_status()
                 self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
                 
-                # --- NEW: Clear APK list on disconnect ---
+                # --- Clear APK list on disconnect ---
                 self._clear_apk_monitor()
                 
             else:
@@ -966,16 +967,32 @@ class App:
             print(f"Removed original: {zip_path}")
 
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
-                for root, _, files in os.walk(temp_extract_dir):
+                # --- FIX: Add directory entries first ---
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    # Add directory entries
+                    for d in dirs:
+                        dir_path = os.path.join(root, d)
+                        arcname = os.path.relpath(dir_path, temp_extract_dir)
+                        arcname = arcname.replace(os.path.sep, '/') + '/'
+                        
+                        zinfo = zipfile.ZipInfo(arcname)
+                        zinfo.create_system = 3 # Unix
+                        zinfo.external_attr = (0o755 << 16) | 0x10 # 0x10 is directory flag
+                        zinfo.compress_type = zipfile.ZIP_DEFLATED
+                        zip_ref.writestr(zinfo, "")
+                        
+                    # Now, add all files in this directory
                     for file in files:
                         file_path = os.path.join(root, file)
                         arcname = os.path.relpath(file_path, temp_extract_dir) 
                         arcname = arcname.replace(os.path.sep, '/') 
+                        
                         zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
-                        zinfo.create_system = 3
+                        zinfo.create_system = 3 
                         zinfo.external_attr = (0o644 << 16) 
+                        
                         with open(file_path, "rb") as source:
-                            zip_ref.writestr(zinfo, source.read()) 
+                            zip_ref.writestr(zinfo, source.read())
             
             print(f"Successfully re-packaged with Unix Host OS & standard paths: {zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
@@ -990,8 +1007,6 @@ class App:
             self.master.after(0, self._remove_from_processing_list, zip_path) 
             
     # --- APK Installer Methods ---
-    
-    # --- NEW: Helper function to clear the APK monitor ---
     def _clear_apk_monitor(self):
         """Clears the APK monitor list and resets the state."""
         print("Clearing APK Monitor...")
