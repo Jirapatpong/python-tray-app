@@ -72,6 +72,9 @@ class ApkFileHandler(FileSystemEventHandler):
         self.process_event(event)
 
 class App:
+    
+    APP_VERSION = "1.0.0" # <--- ตั้งค่าเวอร์ชันตรงนี้
+
     def __init__(self, master, lock_file_path):
         import tkinter as tk
         from tkinter import ttk, scrolledtext
@@ -120,7 +123,7 @@ class App:
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
 
-        master.title("HHT Android Connect")
+        master.title(f"HHT Android Connect - v{self.APP_VERSION}") # <-- NEW: Added version to title
 
         # --- NEW: Updated window size for vertical layout ---
         app_width = 750 # Width: 180px for sidebar + 560px for content
@@ -354,8 +357,7 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
-        clear_zip_btn.pack(side='right')
+        # Removed Clear Button
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -376,8 +378,7 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-        clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
-        clear_apk_btn.pack(side='right')
+        # Removed Clear Button
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -1323,6 +1324,13 @@ class App:
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
         
+        # --- FIX: Set ADB environment variable for scrcpy ---
+        # 1. Copy the current environment
+        env = os.environ.copy()
+        # 2. Tell scrcpy EXACTLY where our adb.exe is
+        env['ADB'] = self.ADB_PATH
+        # --- END FIX ---
+
         # Launch scrcpy in a new process
         # --window-title is crucial for finding the window
         self.scrcpy_process = subprocess.Popen([
@@ -1332,7 +1340,7 @@ class App:
             "--window-x=0", "--window-y=0",
             "--window-width=360", "--window-height=640",
             "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
         
         # Start a thread to find and embed the window
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
