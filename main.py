@@ -180,7 +180,7 @@ class App:
 
         # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
-        self.SCRCPY_PATH = self.get_scrcpy_path() # New path
+        self.SCRCPY_PATH = self.get_scrcpy_path()
         
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -396,16 +396,19 @@ class App:
         # --- Page 5: Stream Screen ---
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
+        # --- NEW: Use Grid to center and expand ---
+        self.stream_frame.grid_rowconfigure(1, weight=1)
+        self.stream_frame.grid_columnconfigure(0, weight=1)
         
         stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        stream_header.pack(pady=(0, 10))
+        stream_header.grid(row=0, column=0, pady=(0, 10))
         
         # This frame will hold the embedded scrcpy window
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=350, height=580) # Resized
-        self.stream_embed_frame.pack(expand=True, pady=10)
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black")
+        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=10)
         
         self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        self.stream_status_label.pack(pady=(10, 0))
+        self.stream_status_label.grid(row=2, column=0, pady=(10, 0))
 
     # --- Log File Methods ---
     def _setup_log_file(self):
@@ -1335,11 +1338,11 @@ class App:
 
         # Launch scrcpy in a new process
         # --window-title is crucial for finding the window
+        # --- FIX: Removed max-size to let embed logic handle it ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size=580", # Resized to fit new frame
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
@@ -1368,36 +1371,34 @@ class App:
 
             # Get the handle (ID) of our Tkinter frame
             frame_id = self.stream_embed_frame.winfo_id()
+            
+            # --- FIX: Resize window to fill frame AND center it ---
+            # Wait for frames to draw
+            self.master.update_idletasks()
+            frame_width = self.stream_embed_frame.winfo_width()
+            frame_height = self.stream_embed_frame.winfo_height()
 
-            # --- NEW: Get actual window size to prevent black bars ---
+            # Get scrcpy window size
             rect = ctypes.wintypes.RECT()
             ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            width = rect.right - rect.left
-            height = rect.bottom - rect.top
+            scrcpy_width = rect.right - rect.left
+            scrcpy_height = rect.bottom - rect.top
             
-            # Container dimensions (padx=20*2=40, width=390. 390-40=350)
-            container_width = 350
-            container_height = 580 # Based on frame height
-            
-            if width > container_width:
-                height = int(height * (container_width / width))
-                width = container_width
-            
-            if height > container_height:
-                width = int(width * (container_height / height))
-                height = container_height
-            
-            print(f"scrcpy window found. Resizing frame to: {width}x{height}")
-            
-            # Resize our black embed frame to match the window size
-            self.stream_embed_frame.config(width=width, height=height)
-            # --- END NEW ---
+            # Calculate aspect ratio
+            ratio = min(frame_width / scrcpy_width, frame_height / scrcpy_height)
+            new_width = int(scrcpy_width * ratio)
+            new_height = int(scrcpy_height * ratio)
+
+            # Calculate offsets to center the window
+            x_offset = (frame_width - new_width) // 2
+            y_offset = (frame_height - new_height) // 2
+            # --- END FIX ---
             
             # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
             
-            # Move it to the top-left corner of the frame and resize
-            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, width, height, True)
+            # Move it to the center of the frame and resize
+            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, new_width, new_height, True)
             
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
@@ -1415,7 +1416,10 @@ class App:
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
             if self.is_running: # Check if app is still running
-                self.stream_status_label.config(text="Stream stopped.")
+                try:
+                    self.stream_status_label.config(text="Stream stopped.")
+                except tk.TclError:
+                    pass # Window already destroyed
 
     # --- Application Exit Method ---
     def on_app_quit(self):
