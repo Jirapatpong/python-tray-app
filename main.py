@@ -317,6 +317,9 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
+        
+        # --- REMOVED Clear Button for Zip ---
+        
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -337,6 +340,9 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
+
+        # --- REMOVED Clear Button for APK ---
+
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -901,6 +907,24 @@ class App:
             print(f"Error scanning existing APKs: {e}")
 
     # --- Zip Service Methods ---
+    def _clear_zip_monitor(self):
+        """Clears the Zip monitor list and resets the state."""
+        print("Clearing Zip Monitor...")
+        try:
+            for item in self.zip_tree.get_children():
+                self.zip_tree.delete(item)
+        except Exception as e:
+            print(f"Error clearing Zip tree: {e}")
+        
+        self.zip_processed_count = 0
+        self.zip_file_map.clear()
+        self.processing_files.clear()
+        
+        try:
+            self.zip_count_label.config(text="Total Files Processed: 0")
+        except Exception as e:
+            print(f"Error resetting Zip count label: {e}")
+
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
@@ -914,6 +938,7 @@ class App:
 
     def _update_zip_status(self, item_id, status):
         try:
+            if not self.zip_tree.exists(item_id): return
             filename = self.zip_tree.item(item_id, 'values')[0]
             if status == "Processing":
                 self.zip_tree.item(item_id, values=(filename, 'Processing'), tags=('processing',))
