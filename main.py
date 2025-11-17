@@ -127,7 +127,7 @@ class App:
 
         # --- NEW: Updated window size for vertical layout ---
         app_width = 560 # Slimmer width (170 + 390)
-        app_height = 680 # Slimmer height
+        app_height = 640 # Slimmer height (Reduced by 5%)
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -397,15 +397,15 @@ class App:
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
         # --- NEW: Use Grid to center and expand ---
-        self.stream_frame.grid_rowconfigure(1, weight=1)
-        self.stream_frame.grid_columnconfigure(0, weight=1)
+        self.stream_frame.grid_rowconfigure(1, weight=1) # Let row 1 (embed frame) expand
+        self.stream_frame.grid_columnconfigure(0, weight=1) # Let col 0 expand
         
         stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         stream_header.grid(row=0, column=0, pady=(0, 10))
         
         # This frame will hold the embedded scrcpy window
         self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black")
-        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=10)
+        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5) # Fills available space
         
         self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.stream_status_label.grid(row=2, column=0, pady=(10, 0))
@@ -1336,12 +1336,12 @@ class App:
         env['ADB'] = self.ADB_PATH
         # --- END FIX ---
 
-        # --- FIX: Set max height to fit container ---
+        # --- FIX: Set max height to fit our new smaller frame ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size=620", # Set max height to fit our frame
+            "--max-size=540", # New max height
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
