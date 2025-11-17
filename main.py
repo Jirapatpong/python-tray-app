@@ -357,8 +357,9 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
-        clear_zip_btn.pack(side='right')
+        # --- Removed Clear Button ---
+        # clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
+        # clear_zip_btn.pack(side='right')
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -379,8 +380,9 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-        clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
-        clear_apk_btn.pack(side='right')
+        # --- Removed Clear Button ---
+        # clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
+        # clear_apk_btn.pack(side='right')
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
