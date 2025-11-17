@@ -126,7 +126,7 @@ class App:
         master.title(f"HHT Android Connect - v{self.APP_VERSION}") # <-- Added version to title
 
         # --- NEW: Updated window size for vertical layout ---
-        app_width = 560 # Slimmer width
+        app_width = 560 # Slimmer width (170 + 390)
         app_height = 680 # Slimmer height
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
@@ -180,7 +180,7 @@ class App:
 
         # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
-        self.SCRCPY_PATH = self.get_scrcpy_path()
+        self.SCRCPY_PATH = self.get_scrcpy_path() # New path
         
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -296,7 +296,7 @@ class App:
 
         # --- 2. Main Content Area ---
         # This frame holds all the "pages" stacked on top of each other
-        self.content_area = tk.Frame(self.master, bg=self.COLOR_BG)
+        self.content_area = tk.Frame(self.master, bg=self.COLOR_BG, width=390) # Slimmer content
         self.content_area.grid(row=0, column=1, sticky='nsew')
         
         # --- Page 1: Device Status ---
@@ -357,8 +357,8 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        # clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
-        # clear_zip_btn.pack(side='right')
+        clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
+        clear_zip_btn.pack(side='right')
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -379,8 +379,8 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-        # clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
-        # clear_apk_btn.pack(side='right')
+        clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
+        clear_apk_btn.pack(side='right')
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -401,7 +401,7 @@ class App:
         stream_header.pack(pady=(0, 10))
         
         # This frame will hold the embedded scrcpy window
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=370, height=580) # Resized
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=350, height=580) # Resized
         self.stream_embed_frame.pack(expand=True, pady=10)
         
         self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
@@ -1339,9 +1339,8 @@ class App:
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size=580", # Resized
+            "--max-size=580", # Resized to fit new frame
             "--window-x=0", "--window-y=0",
-            # "--window-width=370", "--window-height=580", # Removed hardcoded size
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
         
@@ -1369,13 +1368,36 @@ class App:
 
             # Get the handle (ID) of our Tkinter frame
             frame_id = self.stream_embed_frame.winfo_id()
+
+            # --- NEW: Get actual window size to prevent black bars ---
+            rect = ctypes.wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            
+            # Container dimensions (padx=20*2=40, width=390. 390-40=350)
+            container_width = 350
+            container_height = 580 # Based on frame height
+            
+            if width > container_width:
+                height = int(height * (container_width / width))
+                width = container_width
+            
+            if height > container_height:
+                width = int(width * (container_height / height))
+                height = container_height
+            
+            print(f"scrcpy window found. Resizing frame to: {width}x{height}")
+            
+            # Resize our black embed frame to match the window size
+            self.stream_embed_frame.config(width=width, height=height)
+            # --- END NEW ---
             
             # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
             
-            # --- NEW: Resize window to fill frame ---
-            # Move it to the top-left corner of the frame and resize it
-            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, 370, 580, True)
+            # Move it to the top-left corner of the frame and resize
+            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, width, height, True)
             
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
