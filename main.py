@@ -1336,13 +1336,12 @@ class App:
         env['ADB'] = self.ADB_PATH
         # --- END FIX ---
 
-        # Launch scrcpy in a new process
-        # --window-title is crucial for finding the window
-        # --- FIX: Removed max-size to let embed logic handle it ---
+        # --- FIX: Set max height to fit container ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
+            "--max-size=620", # Set max height to fit our frame
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
@@ -1372,9 +1371,8 @@ class App:
             # Get the handle (ID) of our Tkinter frame
             frame_id = self.stream_embed_frame.winfo_id()
             
-            # --- FIX: Resize window to fill frame AND center it ---
-            # Wait for frames to draw
-            self.master.update_idletasks()
+            # --- FIX: Get actual window size and center it ---
+            self.master.update_idletasks() # Ensure frame size is calculated
             frame_width = self.stream_embed_frame.winfo_width()
             frame_height = self.stream_embed_frame.winfo_height()
 
@@ -1384,21 +1382,16 @@ class App:
             scrcpy_width = rect.right - rect.left
             scrcpy_height = rect.bottom - rect.top
             
-            # Calculate aspect ratio
-            ratio = min(frame_width / scrcpy_width, frame_height / scrcpy_height)
-            new_width = int(scrcpy_width * ratio)
-            new_height = int(scrcpy_height * ratio)
-
             # Calculate offsets to center the window
-            x_offset = (frame_width - new_width) // 2
-            y_offset = (frame_height - new_height) // 2
+            x_offset = (frame_width - scrcpy_width) // 2
+            y_offset = (frame_height - scrcpy_height) // 2
             # --- END FIX ---
             
             # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
             
             # Move it to the center of the frame and resize
-            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, new_width, new_height, True)
+            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, scrcpy_width, scrcpy_height, True)
             
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
