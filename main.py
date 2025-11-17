@@ -9,7 +9,7 @@ import zipfile
 import shutil
 import configparser # Using configparser for .ini files
 import datetime # For log date management
-import ctypes # New: For screen streaming (embedding window)
+import ctypes # For screen streaming (embedding window)
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -123,11 +123,11 @@ class App:
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
 
-        master.title(f"HHT Android Connect - v{self.APP_VERSION}") # <-- NEW: Added version to title
+        master.title(f"HHT Android Connect - v{self.APP_VERSION}") # <-- Added version to title
 
         # --- NEW: Updated window size for vertical layout ---
-        app_width = 750 # Width: 180px for sidebar + 560px for content
-        app_height = 700 # Taller to fit screen
+        app_width = 560 # Slimmer width
+        app_height = 680 # Slimmer height
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -180,7 +180,7 @@ class App:
 
         # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
-        self.SCRCPY_PATH = self.get_scrcpy_path() # New path
+        self.SCRCPY_PATH = self.get_scrcpy_path()
         
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -254,7 +254,7 @@ class App:
                            activebackground=self.COLOR_SIDEBAR_BTN_ACTIVE,
                            activeforeground=self.COLOR_SIDEBAR_TEXT_ACTIVE,
                            relief='flat', bd=0, anchor='w',
-                           padx=20, pady=15)
+                           padx=15, pady=15) # Slimmer padding
         return button
 
     # --- NEW: create_widgets (Complete Redesign) ---
@@ -267,13 +267,13 @@ class App:
         self.master.grid_columnconfigure(1, weight=1)
         
         # --- 1. Sidebar ---
-        sidebar_frame = tk.Frame(self.master, bg=self.COLOR_SIDEBAR_BG, width=180)
+        sidebar_frame = tk.Frame(self.master, bg=self.COLOR_SIDEBAR_BG, width=170) # Slimmer sidebar
         sidebar_frame.grid(row=0, column=0, sticky='nsw')
         sidebar_frame.pack_propagate(False) # Prevent shrinking
         
         header_label = tk.Label(sidebar_frame, text="HHT CONNECT", font=('Segoe UI', 14, 'bold'),
                                 bg=self.COLOR_SIDEBAR_BG, fg=self.COLOR_BG,
-                                anchor='w', padx=20, pady=20)
+                                anchor='w', padx=15, pady=20)
         header_label.pack(fill='x')
         
         self.side_btn_device = self.create_side_button(sidebar_frame, "Device Status", lambda: self.switch_tab('device'))
@@ -308,8 +308,8 @@ class App:
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=300)
-        self.device_tree.column('status', anchor='center', width=100)
+        self.device_tree.column('device_id', anchor='w', width=240) # Resized
+        self.device_tree.column('status', anchor='center', width=100) # Resized
         self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
         self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground=self.COLOR_TEXT)
@@ -357,12 +357,13 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        # Removed Clear Button
+        # clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
+        # clear_zip_btn.pack(side='right')
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
-        self.zip_tree.column('filename', anchor='w', width=350)
-        self.zip_tree.column('status', anchor='w', width=100)
+        self.zip_tree.column('filename', anchor='w', width=240) # Resized
+        self.zip_tree.column('status', anchor='w', width=100) # Resized
         self.zip_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
         self.zip_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
         self.zip_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
@@ -378,12 +379,13 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-        # Removed Clear Button
+        # clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
+        # clear_apk_btn.pack(side='right')
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
-        self.apk_tree.column('filename', anchor='w', width=350)
-        self.apk_tree.column('status', anchor='w', width=100)
+        self.apk_tree.column('filename', anchor='w', width=240) # Resized
+        self.apk_tree.column('status', anchor='w', width=100) # Resized
         self.apk_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
         self.apk_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
         self.apk_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
@@ -399,7 +401,7 @@ class App:
         stream_header.pack(pady=(0, 10))
         
         # This frame will hold the embedded scrcpy window
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=360, height=640)
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=370, height=580) # Resized
         self.stream_embed_frame.pack(expand=True, pady=10)
         
         self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
@@ -1337,8 +1339,9 @@ class App:
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
+            "--max-size=580", # Resized
             "--window-x=0", "--window-y=0",
-            "--window-width=360", "--window-height=640",
+            # "--window-width=370", "--window-height=580", # Removed hardcoded size
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
         
@@ -1359,7 +1362,8 @@ class App:
             
             if hwnd == 0:
                 print("Could not find HHT_STREAM window. Aborting embed.")
-                self.stream_status_label.config(text="Error: Could not start stream. Try reconnecting device.")
+                if self.is_running:
+                    self.stream_status_label.config(text="Error: Could not start stream. Try reconnecting device.")
                 self._stop_stream()
                 return
 
@@ -1369,11 +1373,13 @@ class App:
             # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
             
-            # Move it to the top-left corner of the frame
-            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, 360, 640, True)
+            # --- NEW: Resize window to fill frame ---
+            # Move it to the top-left corner of the frame and resize it
+            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, 370, 580, True)
             
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
-            self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
+            if self.is_running:
+                self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
 
         except Exception as e:
             print(f"Error embedding window: {e}")
@@ -1386,7 +1392,8 @@ class App:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            self.stream_status_label.config(text="Stream stopped.")
+            if self.is_running: # Check if app is still running
+                self.stream_status_label.config(text="Stream stopped.")
 
     # --- Application Exit Method ---
     def on_app_quit(self):
