@@ -9,6 +9,7 @@ import zipfile
 import shutil
 import configparser # Using configparser for .ini files
 import datetime # For log date management
+import ctypes # New: For screen streaming (embedding window)
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -109,6 +110,11 @@ class App:
         self.apk_file_map = {}
         self.apk_processing_files = set()
         
+        # --- NEW: Screen streaming variables ---
+        self.scrcpy_process = None
+        self.stream_window_id = None
+        self.current_tab = "device" # Track current tab
+        
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -116,8 +122,9 @@ class App:
 
         master.title("HHT Android Connect")
 
-        app_width = 560
-        app_height = 360
+        # --- NEW: Updated window size for vertical layout ---
+        app_width = 750 # Width: 180px for sidebar + 560px for content
+        app_height = 700 # Taller to fit screen
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -136,6 +143,11 @@ class App:
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
         self.COLOR_WARNING = "#F59E0B"
+        self.COLOR_SIDEBAR_BG = "#3D4450" # Dark sidebar
+        self.COLOR_SIDEBAR_BTN_INACTIVE = "#3D4450"
+        self.COLOR_SIDEBAR_BTN_ACTIVE = "#E0E5EC"
+        self.COLOR_SIDEBAR_TEXT_INACTIVE = "#C8D0DA"
+        self.COLOR_SIDEBAR_TEXT_ACTIVE = "#3D4450"
 
         master.configure(background=self.COLOR_BG)
 
@@ -159,25 +171,23 @@ class App:
         self.style.map('Treeview.Heading', background=[('active', self.COLOR_BG)])
         self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
         
-        self.style.configure('Tab.TButton', font=('Segoe UI', 10, 'bold'), padding=(15, 5), relief='raised', borderwidth=2)
-        self.style.map('Tab.TButton',
-                       background=[('selected', self.COLOR_3D_BG_ACTIVE), ('!selected', self.COLOR_3D_BG_INACTIVE)],
-                       foreground=[('selected', 'white'), ('!selected', self.COLOR_TEXT)])
-
         self.style.configure('Raised.TButton', font=('Segoe UI', 9, 'bold'), padding=(10, 5), relief='raised',
                              background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
         # --- Initialization Steps ---
         self.ADB_PATH = self.get_adb_path()
+        self.SCRCPY_PATH = self.get_scrcpy_path() # New path
+        
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
             master.quit()
             return
+            
         self.start_adb_server()
         self.connected_device = None
 
-        self.create_widgets()
+        self.create_widgets() # Build the NEW UI
         self.refresh_devices()
         self.update_tray_status()
 
@@ -188,6 +198,8 @@ class App:
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
+        
+        self.switch_tab('device') # Start on the first tab
 
     # --- Custom Notification Methods ---
     def show_notification(self, message, is_connected):
@@ -228,47 +240,72 @@ class App:
         self.notification_window = None
         self.notification_timer = None
 
-    # --- UI Creation ---
+    # --- NEW: create_side_button ---
+    def create_side_button(self, parent, text, command):
+        """Creates a new button for the sidebar."""
+        import tkinter as tk
+        button = tk.Button(parent, text=text, command=command,
+                           font=('Segoe UI', 10, 'bold'),
+                           bg=self.COLOR_SIDEBAR_BTN_INACTIVE,
+                           fg=self.COLOR_SIDEBAR_TEXT_INACTIVE,
+                           activebackground=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                           activeforeground=self.COLOR_SIDEBAR_TEXT_ACTIVE,
+                           relief='flat', bd=0, anchor='w',
+                           padx=20, pady=15)
+        return button
+
+    # --- NEW: create_widgets (Complete Redesign) ---
     def create_widgets(self):
         import tkinter as tk
         from tkinter import ttk, scrolledtext
 
-        self.master.grid_rowconfigure(2, weight=1)
-        self.master.grid_columnconfigure(0, weight=1)
-        header_frame = tk.Frame(self.master, bg=self.COLOR_BG)
-        header_frame.grid(row=0, column=0, sticky='ew', padx=20, pady=(15, 5))
-        header_label = tk.Label(header_frame, text="HHT Android Connect", font=('Segoe UI', 16, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        header_label.pack(side='left')
-        tab_container = tk.Frame(self.master, bg=self.COLOR_BG)
-        tab_container.grid(row=1, column=0, sticky='ew', padx=20)
+        # --- Main Layout (Sidebar + Content) ---
+        self.master.grid_rowconfigure(0, weight=1)
+        self.master.grid_columnconfigure(1, weight=1)
         
-        self.device_tab_btn = ttk.Button(tab_container, text="Device Status", style='Tab.TButton', command=lambda: self.switch_tab('device'))
-        self.device_tab_btn.pack(side='left')
-        self.api_tab_btn = ttk.Button(tab_container, text="API Log", style='Tab.TButton', command=lambda: self.switch_tab('api'))
-        self.api_tab_btn.pack(side='left', padx=1)
-        self.zip_tab_btn = ttk.Button(tab_container, text="Zip Monitor", style='Tab.TButton', command=lambda: self.switch_tab('zip'))
-        self.zip_tab_btn.pack(side='left', padx=1)
-        self.apk_tab_btn = ttk.Button(tab_container, text="APK Monitor", style='Tab.TButton', command=lambda: self.switch_tab('apk'))
-        self.apk_tab_btn.pack(side='left', padx=1)
+        # --- 1. Sidebar ---
+        sidebar_frame = tk.Frame(self.master, bg=self.COLOR_SIDEBAR_BG, width=180)
+        sidebar_frame.grid(row=0, column=0, sticky='nsw')
+        sidebar_frame.pack_propagate(False) # Prevent shrinking
         
-        shadow_dark = tk.Frame(self.master, bg=self.COLOR_SHADOW_DARK)
-        shadow_dark.grid(row=2, column=0, sticky='nsew', padx=(22, 18), pady=(0, 18))
-        shadow_light = tk.Frame(shadow_dark, bg=self.COLOR_SHADOW_LIGHT)
-        shadow_light.pack(fill='both', expand=True, padx=(2, 0), pady=(2, 0))
-        self.content_frame = tk.Frame(shadow_light, bg=self.COLOR_BG, padx=15, pady=15)
-        self.content_frame.pack(fill='both', expand=True, padx=(0, 2), pady=(0, 2))
-        self.content_frame.grid_rowconfigure(0, weight=1)
-        self.content_frame.grid_columnconfigure(0, weight=1)
+        header_label = tk.Label(sidebar_frame, text="HHT CONNECT", font=('Segoe UI', 14, 'bold'),
+                                bg=self.COLOR_SIDEBAR_BG, fg=self.COLOR_BG,
+                                anchor='w', padx=20, pady=20)
+        header_label.pack(fill='x')
         
-        # Frame 1: Device Status
-        self.device_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
-        self.device_frame.grid(row=0, column=0, sticky='nsew')
+        self.side_btn_device = self.create_side_button(sidebar_frame, "Device Status", lambda: self.switch_tab('device'))
+        self.side_btn_device.pack(fill='x')
+        
+        self.side_btn_api = self.create_side_button(sidebar_frame, "API Log", lambda: self.switch_tab('api'))
+        self.side_btn_api.pack(fill='x')
+
+        self.side_btn_zip = self.create_side_button(sidebar_frame, "Zip Monitor", lambda: self.switch_tab('zip'))
+        self.side_btn_zip.pack(fill='x')
+
+        self.side_btn_apk = self.create_side_button(sidebar_frame, "APK Monitor", lambda: self.switch_tab('apk'))
+        self.side_btn_apk.pack(fill='x')
+        
+        self.side_btn_stream = self.create_side_button(sidebar_frame, "Stream Screen", lambda: self.switch_tab('stream'))
+        self.side_btn_stream.pack(fill='x')
+
+        # List of all buttons for easy management
+        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk, self.side_btn_stream]
+
+        # --- 2. Main Content Area ---
+        # This frame holds all the "pages" stacked on top of each other
+        self.content_area = tk.Frame(self.master, bg=self.COLOR_BG)
+        self.content_area.grid(row=0, column=1, sticky='nsew')
+        
+        # --- Page 1: Device Status ---
+        self.device_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
+        self.device_frame.place(relwidth=1, relheight=1) # Use .place to stack frames
         self.device_frame.grid_rowconfigure(0, weight=1)
         self.device_frame.grid_columnconfigure(0, weight=1)
+        
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=250)
+        self.device_tree.column('device_id', anchor='w', width=300)
         self.device_tree.column('status', anchor='center', width=100)
         self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
         self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
@@ -283,9 +320,9 @@ class App:
         self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
 
-        # Frame 2: API Log
-        self.api_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
-        self.api_frame.grid(row=0, column=0, sticky='nsew')
+        # --- Page 2: API Log ---
+        self.api_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
+        self.api_frame.place(relwidth=1, relheight=1)
         self.api_frame.grid_rowconfigure(1, weight=1)
         self.api_frame.grid_columnconfigure(0, weight=1)
         api_header_frame = tk.Frame(self.api_frame, bg=self.COLOR_BG)
@@ -308,18 +345,17 @@ class App:
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
 
-        # Frame 3: Zip Monitor
-        self.zip_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
-        self.zip_frame.grid(row=0, column=0, sticky='nsew')
+        # --- Page 3: Zip Monitor ---
+        self.zip_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
+        self.zip_frame.place(relwidth=1, relheight=1)
         self.zip_frame.grid_rowconfigure(1, weight=1)
         self.zip_frame.grid_columnconfigure(0, weight=1)
         zip_header_frame = tk.Frame(self.zip_frame, bg=self.COLOR_BG)
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        
-        # --- REMOVED Clear Button for Zip ---
-        
+        clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
+        clear_zip_btn.pack(side='right')
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -331,18 +367,17 @@ class App:
         self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         
-        # Frame 4: APK Monitor
-        self.apk_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
-        self.apk_frame.grid(row=0, column=0, sticky='nsew')
+        # --- Page 4: APK Monitor ---
+        self.apk_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
+        self.apk_frame.place(relwidth=1, relheight=1)
         self.apk_frame.grid_rowconfigure(1, weight=1)
         self.apk_frame.grid_columnconfigure(0, weight=1)
         apk_header_frame = tk.Frame(self.apk_frame, bg=self.COLOR_BG)
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-
-        # --- REMOVED Clear Button for APK ---
-
+        clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
+        clear_apk_btn.pack(side='right')
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -355,7 +390,19 @@ class App:
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
 
-        self.switch_tab('device')
+        # --- Page 5: Stream Screen ---
+        self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
+        self.stream_frame.place(relwidth=1, relheight=1)
+        
+        stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        stream_header.pack(pady=(0, 10))
+        
+        # This frame will hold the embedded scrcpy window
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black", width=360, height=640)
+        self.stream_embed_frame.pack(expand=True, pady=10)
+        
+        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.stream_status_label.pack(pady=(10, 0))
 
     # --- Log File Methods ---
     def _setup_log_file(self):
@@ -502,28 +549,35 @@ class App:
         return entry_frame
 
     def switch_tab(self, tab_name):
-        self.device_tab_btn.state(['!selected'])
-        self.api_tab_btn.state(['!selected'])
-        self.zip_tab_btn.state(['!selected'])
-        self.apk_tab_btn.state(['!selected'])
+        print(f"Switching to tab: {tab_name}")
+        self.current_tab = tab_name
         
-        self.device_frame.grid_remove()
-        self.api_frame.grid_remove()
-        self.zip_frame.grid_remove()
-        self.apk_frame.grid_remove()
-        
+        # Stop stream if we navigate away
+        if tab_name != "stream":
+            self._stop_stream()
+            
+        # Reset all button styles
+        for btn in self.all_side_buttons:
+            btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
+            
+        # Raise the correct frame and highlight the button
         if tab_name == 'device':
-            self.device_frame.grid()
-            self.device_tab_btn.state(['selected'])
+            self.device_frame.tkraise()
+            self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'api':
-            self.api_frame.grid()
-            self.api_tab_btn.state(['selected'])
+            self.api_frame.tkraise()
+            self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'zip':
-            self.zip_frame.grid()
-            self.zip_tab_btn.state(['selected'])
+            self.zip_frame.tkraise()
+            self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'apk':
-            self.apk_frame.grid()
-            self.apk_tab_btn.state(['selected'])
+            self.apk_frame.tkraise()
+            self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+        elif tab_name == 'stream':
+            self.stream_frame.tkraise()
+            self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            # Start the stream
+            self._start_stream()
 
     # --- API Process Methods ---
     def set_api_status(self, status):
@@ -614,12 +668,16 @@ class App:
 
     # --- Window and Tray Methods ---
     def hide_window(self):
+        self._stop_stream() # Stop stream when hiding
         self.master.withdraw()
 
     def show_window(self, icon=None, item=None):
         self.master.deiconify()
         self.master.lift()
         self.master.focus_force()
+        # Restart stream if that was the last active tab
+        if self.current_tab == 'stream':
+            self._start_stream()
 
     def update_tray_status(self):
         if not self.tray_icon: return
@@ -682,6 +740,8 @@ class App:
             
             # --- Clear APK list on disconnect ---
             self.master.after(0, self._clear_apk_monitor)
+            # --- Stop stream on disconnect ---
+            self._stop_stream()
         
     def _update_device_tree(self, all_known_devices):
         import tkinter as tk
@@ -753,6 +813,8 @@ class App:
                 
                 # --- Clear APK list on disconnect ---
                 self._clear_apk_monitor()
+                # --- Stop stream on disconnect ---
+                self._stop_stream()
                 
             else:
                 messagebox.showerror("Error", f"Failed to disconnect:\n{result.stderr}")
@@ -769,6 +831,14 @@ class App:
             base_path = os.path.dirname(os.path.abspath(__file__))
         adb_path = os.path.join(base_path, "adb", "adb.exe")
         return adb_path if os.path.exists(adb_path) else "adb"
+
+    def get_scrcpy_path(self):
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        scrcpy_path = os.path.join(base_path, "scrcpy", "scrcpy.exe")
+        return scrcpy_path if os.path.exists(scrcpy_path) else "scrcpy.exe"
 
     def check_adb(self):
         from tkinter import messagebox
@@ -899,7 +969,6 @@ class App:
             for filename in os.listdir(self.apk_monitor_path):
                 if filename.endswith(".apk"):
                     filepath = os.path.join(self.apk_monitor_path, filename)
-                    # --- FIX: Check if already in map before adding ---
                     if filepath not in self.apk_file_map and filepath not in self.apk_processing_files:
                         print(f"Found existing APK: {filepath}")
                         self._add_apk_to_monitor(filepath)
@@ -1085,8 +1154,6 @@ class App:
         import tkinter as tk
         filename = os.path.basename(filepath)
         
-        # This is the fix: Add to session map (apk_file_map) first
-        # This prevents the file event from adding it twice
         if filepath in self.apk_file_map:
              print(f"APK {filename} is already in the processing queue or done.")
              return
@@ -1212,9 +1279,8 @@ class App:
             
     def _update_apk_status(self, item_id, status_message):
         try:
-            # Check if item still exists in the tree
             if not self.apk_tree.exists(item_id):
-                return # It was cleared, no need to update
+                return
                 
             filename = self.apk_tree.item(item_id, 'values')[0]
             
@@ -1236,10 +1302,89 @@ class App:
         if filepath in self.apk_processing_files:
             self.apk_processing_files.remove(filepath)
             
+    # --- NEW: Screen Streaming Methods ---
+    def _start_stream(self):
+        """Starts the scrcpy stream and embeds it."""
+        from tkinter import messagebox
+        if not self.connected_device:
+            self.stream_status_label.config(text="Error: No device connected.")
+            return
+        
+        if self.scrcpy_process:
+            print("Stream already running.")
+            return
+            
+        if not os.path.exists(self.SCRCPY_PATH):
+            print(f"scrcpy not found at: {self.SCRCPY_PATH}")
+            messagebox.showerror("Stream Error", f"scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
+            self.stream_status_label.config(text="Error: scrcpy.exe not found.")
+            return
+
+        print("Starting stream...")
+        self.stream_status_label.config(text="Starting stream, please wait...")
+        
+        # Launch scrcpy in a new process
+        # --window-title is crucial for finding the window
+        self.scrcpy_process = subprocess.Popen([
+            self.SCRCPY_PATH,
+            "-s", self.connected_device,
+            "--window-title=HHT_STREAM",
+            "--window-x=0", "--window-y=0",
+            "--window-width=360", "--window-height=640",
+            "--window-borderless"
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        # Start a thread to find and embed the window
+        threading.Thread(target=self._embed_stream_window, daemon=True).start()
+
+    def _embed_stream_window(self):
+        """Worker thread to find the scrcpy window and embed it."""
+        try:
+            # Find the window handle (HWND) using the title we set
+            hwnd = 0
+            retries = 10 # Try for 5 seconds
+            while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
+                hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
+                if hwnd == 0:
+                    retries -= 1
+                    time.sleep(0.5)
+            
+            if hwnd == 0:
+                print("Could not find HHT_STREAM window. Aborting embed.")
+                self.stream_status_label.config(text="Error: Could not start stream. Try reconnecting device.")
+                self._stop_stream()
+                return
+
+            # Get the handle (ID) of our Tkinter frame
+            frame_id = self.stream_embed_frame.winfo_id()
+            
+            # Re-parent the scrcpy window into our frame
+            ctypes.windll.user32.SetParent(hwnd, frame_id)
+            
+            # Move it to the top-left corner of the frame
+            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, 360, 640, True)
+            
+            print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
+            self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
+
+        except Exception as e:
+            print(f"Error embedding window: {e}")
+            if self.is_running: # Only update label if app is not closing
+                self.stream_status_label.config(text="Error: Failed to embed stream.")
+
+    def _stop_stream(self):
+        """Stops the scrcpy stream process if it's running."""
+        if self.scrcpy_process:
+            print("Stopping stream...")
+            self.scrcpy_process.terminate()
+            self.scrcpy_process = None
+            self.stream_status_label.config(text="Stream stopped.")
+
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
         self._auto_save_log()
+        self._stop_stream() # Stop stream on quit
         
         if self.zip_file_observer:
             self.zip_file_observer.stop()
