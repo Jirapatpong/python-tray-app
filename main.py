@@ -127,7 +127,7 @@ class App:
 
         # --- NEW: Updated window size for vertical layout ---
         app_width = 560 # Slimmer width (170 + 390)
-        app_height = 640 # Slimmer height (Reduced by 5%)
+        app_height = 640 # Slimmer height
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -358,8 +358,6 @@ class App:
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
         # --- Removed Clear Button ---
-        # clear_zip_btn = ttk.Button(zip_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_zip_monitor)
-        # clear_zip_btn.pack(side='right')
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -381,8 +379,6 @@ class App:
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
         # --- Removed Clear Button ---
-        # clear_apk_btn = ttk.Button(apk_header_frame, text="Clear List", style='Raised.TButton', command=self._clear_apk_monitor)
-        # clear_apk_btn.pack(side='right')
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -1332,18 +1328,16 @@ class App:
         self.stream_status_label.config(text="Starting stream, please wait...")
         
         # --- FIX: Set ADB environment variable for scrcpy ---
-        # 1. Copy the current environment
         env = os.environ.copy()
-        # 2. Tell scrcpy EXACTLY where our adb.exe is
         env['ADB'] = self.ADB_PATH
         # --- END FIX ---
 
-        # --- FIX: Set max height to fit our new smaller frame ---
+        # --- FIX: Removed hardcoded max-size ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size=540", # New max height (640h - 80padding - 20label)
+            # "--max-size=540", # <-- This was the bug
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
@@ -1384,16 +1378,21 @@ class App:
             scrcpy_width = rect.right - rect.left
             scrcpy_height = rect.bottom - rect.top
             
+            # Calculate aspect ratio to fit height
+            ratio = frame_height / scrcpy_height
+            new_height = frame_height
+            new_width = int(scrcpy_width * ratio)
+
             # Calculate offsets to center the window
-            x_offset = (frame_width - scrcpy_width) // 2
-            y_offset = (frame_height - scrcpy_height) // 2
+            x_offset = (frame_width - new_width) // 2
+            y_offset = (frame_height - new_height) // 2 # Should be 0
             # --- END FIX ---
             
             # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
             
             # Move it to the center of the frame and resize
-            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, scrcpy_width, scrcpy_height, True)
+            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, new_width, new_height, True)
             
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
