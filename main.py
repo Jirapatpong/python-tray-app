@@ -1341,7 +1341,7 @@ class App:
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size=540", # New max height
+            "--max-size=540", # New max height (640h - 80padding - 20label)
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
