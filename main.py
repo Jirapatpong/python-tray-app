@@ -9,7 +9,7 @@ import zipfile
 import shutil
 import configparser # Using configparser for .ini files
 import datetime # For log date management
-import ctypes # For screen streaming (embedding window)
+# import ctypes # REMOVED: No longer needed for standalone window
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -73,7 +73,7 @@ class ApkFileHandler(FileSystemEventHandler):
 
 class App:
     
-    APP_VERSION = "1.0.0" # <--- ตั้งค่าเวอร์ชันตรงนี้
+    APP_VERSION = "1.0.1" # Updated version
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -115,9 +115,6 @@ class App:
         
         # --- NEW: Screen streaming variables ---
         self.scrcpy_process = None
-        self.stream_window_id = None
-        self._source_aspect = None  # width/height of device screen
-        self._stream_resize_bind_id = None
         self.current_tab = "device" # Track current tab
         
         if getattr(sys, 'frozen', False):
@@ -125,11 +122,11 @@ class App:
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
 
-        master.title(f"HHT Android Connect - v{self.APP_VERSION}") # <-- Added version to title
+        master.title(f"HHT Android Connect - v{self.APP_VERSION}") 
 
-        # --- NEW: Updated window size for vertical layout ---
-        app_width = 560 # Slimmer width (170 + 390)
-        app_height = 640 # Slimmer height
+        # --- Updated window size for vertical layout ---
+        app_width = 560 
+        app_height = 640 
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -199,7 +196,7 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        self._setup_log_file() # This now cleans logs, sets path, and loads today's log
+        self._setup_log_file()
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
@@ -359,7 +356,7 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        # --- Removed Clear Button ---
+        
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -380,7 +377,7 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
-        # --- Removed Clear Button ---
+
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -397,17 +394,19 @@ class App:
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
         # --- NEW: Use Grid to center and expand ---
-        self.stream_frame.grid_rowconfigure(1, weight=1) # Let row 1 (embed frame) expand
-        self.stream_frame.grid_columnconfigure(0, weight=1) # Let col 0 expand
+        self.stream_frame.grid_rowconfigure(0, weight=0) # Title
+        self.stream_frame.grid_rowconfigure(1, weight=1) # Stream Area (Expand)
+        self.stream_frame.grid_rowconfigure(2, weight=0) # Status Label
+        self.stream_frame.grid_columnconfigure(0, weight=1) 
         
         stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         stream_header.grid(row=0, column=0, pady=(0, 10))
         
-        # This frame will hold the embedded scrcpy window
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black")
-        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5) # Fills available space
-        
-        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Stream Screen' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        # Use a BIG button to start stream manually
+        self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream", style='Raised.TButton', command=self._start_stream)
+        self.stream_start_btn.grid(row=1, column=0) # Centered
+
+        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to open device screen.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.stream_status_label.grid(row=2, column=0, pady=(10, 0))
 
     # --- Log File Methods ---
@@ -603,8 +602,7 @@ class App:
         elif tab_name == 'stream':
             self.stream_frame.tkraise()
             self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-            # Start the stream
-            self._start_stream()
+            # Don't auto start stream, wait for button
 
     # --- API Process Methods ---
     def set_api_status(self, status):
@@ -702,9 +700,7 @@ class App:
         self.master.deiconify()
         self.master.lift()
         self.master.focus_force()
-        # Restart stream if that was the last active tab
-        if self.current_tab == 'stream':
-            self._start_stream()
+        # No auto-restart stream on window show to prevent confusion, user clicks button
 
     def update_tray_status(self):
         if not self.tray_icon: return
@@ -1331,180 +1327,49 @@ class App:
             
     # --- NEW: Screen Streaming Methods ---
     def _start_stream(self):
-        """Starts the scrcpy stream and embeds it (auto-fit height of embed area)."""
+        """Starts the scrcpy stream and embeds it."""
         from tkinter import messagebox
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
             return
-
+        
         if self.scrcpy_process:
             print("Stream already running.")
             return
-
+            
         if not os.path.exists(self.SCRCPY_PATH):
             print(f"scrcpy not found at: {self.SCRCPY_PATH}")
-            messagebox.showerror("Stream Error", "scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
+            messagebox.showerror("Stream Error", f"scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
             self.stream_status_label.config(text="Error: scrcpy.exe not found.")
             return
 
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
-
-        # Configure environment so scrcpy uses our bundled adb
+        
+        # --- FIX: Set ADB environment variable for scrcpy ---
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
-        
-        # Get the real aspect ratio
-        src_w, src_h = self._get_device_resolution()
-        if src_w and src_h:
-            self._source_aspect = src_w / src_h
-        else:
-            self._source_aspect = None # Will fallback
+        # --- END FIX ---
 
+        # --- FIX: Removed hardcoded max-size ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
             "--window-x=0", "--window-y=0",
             "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
-
-        # Reset window handle
-        self.stream_window_id = None
+        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
         
-        # Unbind previous resize handler if it exists
-        if self._stream_resize_bind_id is not None:
-            try:
-                self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except Exception:
-                pass
-            self._stream_resize_bind_id = None
-
         # Start a thread to find and embed the window
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
     def _embed_stream_window(self):
-        """Find scrcpy window and embed it, then bind resize."""
-        import ctypes
-        try:
-            hwnd = 0
-            retries = 20  # Try for ~10 seconds
-            while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
-                hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
-                if hwnd == 0:
-                    retries -= 1
-                    time.sleep(0.5)
-
-            if hwnd == 0:
-                print("Could not find HHT_STREAM window. Aborting embed.")
-                if self.is_running:
-                    self.stream_status_label.config(text="Error: Could not start stream. Try reconnecting device.")
-                self._stop_stream()
-                return
-
-            self.stream_window_id = hwnd
-
-            # Get the handle (ID) of our Tkinter frame
-            frame_id = self.stream_embed_frame.winfo_id()
-
-            # Re-parent the scrcpy window into our frame
-            ctypes.windll.user32.SetParent(hwnd, frame_id)
-            
-            # If we didn't get aspect from device, get it from window
-            if self._source_aspect is None:
-                rect = ctypes.wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                scrcpy_w = max(1, rect.right - rect.left)
-                scrcpy_h = max(1, rect.bottom - rect.top)
-                self._source_aspect = scrcpy_w / scrcpy_h
-
-            # Bind the resize event to our frame
-            def _on_frame_resize(event):
-                self._resize_stream_to_fit_height()
-            
-            self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", _on_frame_resize)
-            
-            # Trigger first resize
-            self._resize_stream_to_fit_height()
-
-            print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
-            if self.is_running:
-                self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
-
-        except Exception as e:
-            print(f"Error embedding window: {e}")
-            if self.is_running:
-                self.stream_status_label.config(text="Error: Failed to embed stream.")
-
-    def _get_device_resolution(self):
-        """
-        Return (width, height) of the connected device using 'adb shell wm size'.
-        Fallback: (0, 0) if parsing fails.
-        """
-        try:
-            device_id = self.connected_device or ""
-            cmd = [self.ADB_PATH]
-            if device_id:
-                cmd += ["-s", device_id]
-            cmd += ["shell", "wm", "size"]
-
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            out = (res.stdout or "") + "\n" + (res.stderr or "")
-            for line in out.splitlines():
-                line = line.strip()
-                if "Physical size:" in line and "x" in line:
-                    part = line.split("Physical size:")[-1].strip()
-                    w_str, h_str = part.split("x", 1)
-                    return int(w_str), int(h_str)
-        except Exception:
-            pass
-        return (0, 0)
-
-    def _resize_stream_to_fit_height(self, event=None):
-        """Resize & center scrcpy window so that it always fits the frame HEIGHT."""
-        import ctypes
-        if not self.stream_window_id or not self._source_aspect:
-            return
-
-        frame_w = max(1, self.stream_embed_frame.winfo_width())
-        frame_h = max(1, self.stream_embed_frame.winfo_height())
-        
-        # Fit by height: new_h = frame_h, new_w = aspect * frame_h
-        new_h = frame_h
-        new_w = int(self._source_aspect * new_h)
-
-        # If width exceeds frame, fallback to fit by width
-        if new_w > frame_w:
-            new_w = frame_w
-            new_h = int(new_w / self._source_aspect)
-
-        x = (frame_w - new_w) // 2
-        y = (frame_h - new_h) // 2
-        if x < 0: x = 0
-        if y < 0: y = 0
-            
-        try:
-            ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, new_w, new_h, True)
-        except Exception as e:
-            print(f"Error resizing stream window: {e}")
+        """Worker thread to find the scrcpy window and embed it."""
+        # No embedding in standalone mode
+        pass
 
     def _stop_stream(self):
         """Stops the scrcpy stream process if it's running."""
-        # Unbind resize handler if any
-        if self._stream_resize_bind_id is not None:
-            try:
-                self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except Exception:
-                pass
-            self._stream_resize_bind_id = None
-
         if self.scrcpy_process:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
@@ -1518,14 +1383,7 @@ class App:
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
-        
-        # --- Run log save in background ---
-        try:
-            content = self.api_log_text.get("1.0", "end-1c")
-            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
-        except Exception as e:
-            print(f"Error saving log on quit: {e}")
-        
+        self._auto_save_log()
         self._stop_stream() # Stop stream on quit
         
         if self.zip_file_observer:
