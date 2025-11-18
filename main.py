@@ -1,4 +1,3 @@
-# This code has been verified to have correct indentation.
 import subprocess
 import threading
 import os
@@ -7,9 +6,9 @@ import time
 import queue
 import zipfile
 import shutil
-import configparser # Using configparser for .ini files
-import datetime # For log date management
-import ctypes # For screen streaming (embedding window)
+import configparser  # Using configparser for .ini files
+import datetime  # For log date management
+import ctypes  # For screen streaming (embedding window)
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -29,6 +28,7 @@ def create_android_icon(color):
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
+
 # --- Handler for the Zip file monitoring service ---
 class ZipFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
@@ -42,6 +42,7 @@ class ZipFileHandler(FileSystemEventHandler):
             print(f"New zip file detected: {event.src_path}")
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
+
 # --- Handler for the APK file monitoring service ---
 class ApkFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
@@ -50,29 +51,24 @@ class ApkFileHandler(FileSystemEventHandler):
     def process_event(self, event):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
-            
-            # Check 1: Have we *ever* seen this file this session?
             if event.src_path in self.app.apk_file_map:
                 print(f"Ignoring duplicate event for already processed file: {event.src_path}")
                 return
-            
-            # Check 2: Is this file *currently* in the queue?
             if event.src_path in self.app.apk_processing_files:
                 print(f"Ignoring duplicate event for file in queue: {event.src_path}")
                 return
-            
+
             print(f"New APK file event ({event.event_type}): {event.src_path}")
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
 
     def on_created(self, event):
         self.process_event(event)
-        
+
     def on_modified(self, event):
-        # This catches files that are "pasted" or slowly copied
         self.process_event(event)
 
+
 class App:
-    
     APP_VERSION = "1.0.0"
 
     def __init__(self, master, lock_file_path):
@@ -93,33 +89,33 @@ class App:
 
         self.notification_window = None
         self.notification_timer = None
-        
+
         # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        self.log_dir = None 
-        self.current_log_date = None 
+        self.log_dir = None
+        self.current_log_date = None
         self.zip_monitor_path = None
         self.apk_monitor_path = None
         self.zip_file_observer = None
         self.apk_file_observer = None
-        
+
         # --- Zip Monitor ---
         self.zip_processed_count = 0
         self.zip_file_map = {}
         self.processing_files = set()
-        
+
         # --- APK Monitor ---
         self.apk_processed_count = 0
         self.apk_file_map = {}
         self.apk_processing_files = set()
-        
+
         # --- Stream Screen Variables ---
         self.scrcpy_process = None
         self.stream_window_id = None
-        self._source_aspect = None  
+        self._source_aspect = None
         self._stream_resize_bind_id = None
-        self.current_tab = "device" 
-        
+        self.current_tab = "device"
+
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
@@ -128,8 +124,8 @@ class App:
         master.title(f"HHT Android Connect - v{self.APP_VERSION}")
 
         # --- Window Setup ---
-        app_width = 560 
-        app_height = 640 
+        app_width = 560
+        app_height = 640
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -163,7 +159,8 @@ class App:
         # --- Styles ---
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
+        self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT,
+                             borderwidth=0)
         self.style.configure('TFrame', background=self.COLOR_BG)
         self.style.configure('Treeview',
                              background=self.COLOR_BG,
@@ -171,11 +168,13 @@ class App:
                              foreground=self.COLOR_TEXT,
                              rowheight=30,
                              font=('Consolas', 10))
-        self.style.map('Treeview', background=[('selected', self.COLOR_SHADOW_DARK)], foreground=[('selected', self.COLOR_SHADOW_LIGHT)])
+        self.style.map('Treeview', background=[('selected', self.COLOR_SHADOW_DARK)],
+                       foreground=[('selected', self.COLOR_SHADOW_LIGHT)])
         self.style.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'), background=self.COLOR_BG, relief='flat')
         self.style.map('Treeview.Heading', background=[('active', self.COLOR_BG)])
-        self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
-        
+        self.style.configure('TEntry', fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT,
+                             insertcolor=self.COLOR_TEXT, relief='flat', borderwidth=0)
+
         self.style.configure('Raised.TButton', font=('Segoe UI', 9, 'bold'), padding=(10, 5), relief='raised',
                              background=self.COLOR_3D_BG_ACTIVE, foreground='white', borderwidth=2)
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
@@ -183,16 +182,16 @@ class App:
         # --- Initialization ---
         self.ADB_PATH = self.get_adb_path()
         self.SCRCPY_PATH = self.get_scrcpy_path()
-        
+
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
             master.quit()
             return
-            
+
         self.start_adb_server()
         self.connected_device = None
 
-        self.create_widgets() 
+        self.create_widgets()
         self.refresh_devices()
         self.update_tray_status()
 
@@ -203,8 +202,8 @@ class App:
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
-        
-        self.switch_tab('device') 
+
+        self.switch_tab('device')
 
     def show_notification(self, message, is_connected):
         import tkinter as tk
@@ -212,7 +211,7 @@ class App:
             self.master.after_cancel(self.notification_timer)
 
         color = self.COLOR_SUCCESS if is_connected else self.COLOR_DANGER
-        
+
         if self.notification_window and self.notification_window.winfo_exists():
             label = self.notification_window.winfo_children()[0]
             label.config(text=message, bg=color)
@@ -223,8 +222,9 @@ class App:
             win.overrideredirect(True)
             win.attributes("-topmost", True)
             win.config(bg=color)
-            
-            label = tk.Label(win, text=message, fg="white", bg=color, font=('Segoe UI', 10), justify='left', padx=20, pady=10)
+
+            label = tk.Label(win, text=message, fg="white", bg=color, font=('Segoe UI', 10), justify='left', padx=20,
+                             pady=10)
             label.pack()
 
             win.update_idletasks()
@@ -235,7 +235,7 @@ class App:
             x = screen_width - width - 20
             y = screen_height - height - 60
             win.geometry(f'{width}x{height}+{x}+{y}')
-        
+
         self.notification_timer = self.master.after(3000, self.hide_notification)
 
     def hide_notification(self):
@@ -253,7 +253,7 @@ class App:
                            activebackground=self.COLOR_SIDEBAR_BTN_ACTIVE,
                            activeforeground=self.COLOR_SIDEBAR_TEXT_ACTIVE,
                            relief='flat', bd=0, anchor='w',
-                           padx=15, pady=15) 
+                           padx=15, pady=15)
         return button
 
     def create_widgets(self):
@@ -262,20 +262,21 @@ class App:
 
         self.master.grid_rowconfigure(0, weight=1)
         self.master.grid_columnconfigure(1, weight=1)
-        
+
         # --- 1. Sidebar ---
-        sidebar_frame = tk.Frame(self.master, bg=self.COLOR_SIDEBAR_BG, width=170) 
+        sidebar_frame = tk.Frame(self.master, bg=self.COLOR_SIDEBAR_BG, width=170)
         sidebar_frame.grid(row=0, column=0, sticky='nsw')
-        sidebar_frame.pack_propagate(False) 
-        
+        sidebar_frame.pack_propagate(False)
+
         header_label = tk.Label(sidebar_frame, text="HHT CONNECT", font=('Segoe UI', 14, 'bold'),
                                 bg=self.COLOR_SIDEBAR_BG, fg=self.COLOR_BG,
                                 anchor='w', padx=15, pady=20)
         header_label.pack(fill='x')
-        
-        self.side_btn_device = self.create_side_button(sidebar_frame, "Device Status", lambda: self.switch_tab('device'))
+
+        self.side_btn_device = self.create_side_button(sidebar_frame, "Device Status",
+                                                       lambda: self.switch_tab('device'))
         self.side_btn_device.pack(fill='x')
-        
+
         self.side_btn_api = self.create_side_button(sidebar_frame, "API Log", lambda: self.switch_tab('api'))
         self.side_btn_api.pack(fill='x')
 
@@ -284,38 +285,45 @@ class App:
 
         self.side_btn_apk = self.create_side_button(sidebar_frame, "APK Monitor", lambda: self.switch_tab('apk'))
         self.side_btn_apk.pack(fill='x')
-        
-        self.side_btn_stream = self.create_side_button(sidebar_frame, "Stream Screen", lambda: self.switch_tab('stream'))
+
+        self.side_btn_stream = self.create_side_button(sidebar_frame, "Stream Screen",
+                                                       lambda: self.switch_tab('stream'))
         self.side_btn_stream.pack(fill='x')
 
-        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk, self.side_btn_stream]
+        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk,
+                                 self.side_btn_stream]
 
         # --- 2. Main Content Area ---
-        self.content_area = tk.Frame(self.master, bg=self.COLOR_BG, width=390) 
+        self.content_area = tk.Frame(self.master, bg=self.COLOR_BG, width=390)
         self.content_area.grid(row=0, column=1, sticky='nsew')
-        
+
         # --- Page 1: Device Status ---
         self.device_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
-        self.device_frame.place(relwidth=1, relheight=1) 
+        self.device_frame.place(relwidth=1, relheight=1)
         self.device_frame.grid_rowconfigure(0, weight=1)
         self.device_frame.grid_columnconfigure(0, weight=1)
-        
+
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w')
         self.device_tree.heading('status', text='STATUS', anchor='w')
-        self.device_tree.column('device_id', anchor='w', width=240) 
-        self.device_tree.column('status', anchor='center', width=100) 
+        self.device_tree.column('device_id', anchor='w', width=240)
+        self.device_tree.column('status', anchor='center', width=100)
         self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
-        self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
+        self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS,
+                                       font=('Segoe UI', 9, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground=self.COLOR_TEXT)
+
         buttons_frame = tk.Frame(self.device_frame, bg=self.COLOR_BG)
         buttons_frame.grid(row=1, column=0, sticky='ew')
-        self.refresh_button = self.create_neumorphic_button(buttons_frame, text="Refresh", command=self.refresh_devices)
+        self.refresh_button = self.create_neumorphic_button(buttons_frame, text="Refresh",
+                                                            command=self.refresh_devices)
         self.refresh_button.pack(side='left', padx=(0, 10))
-        self.disconnect_button = self.create_neumorphic_button(buttons_frame, text="Disconnect", command=self.disconnect_device)
+        self.disconnect_button = self.create_neumorphic_button(buttons_frame, text="Disconnect",
+                                                               command=self.disconnect_device)
         self.disconnect_button.pack(side='left')
         self.disconnect_button.config(state='disabled')
-        self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect", command=self.connect_device, is_accent=True)
+        self.connect_button = self.create_neumorphic_button(buttons_frame, text="Connect",
+                                                            command=self.connect_device, is_accent=True)
         self.connect_button.pack(side='right')
 
         # --- Page 2: API Log ---
@@ -323,22 +331,42 @@ class App:
         self.api_frame.place(relwidth=1, relheight=1)
         self.api_frame.grid_rowconfigure(1, weight=1)
         self.api_frame.grid_columnconfigure(0, weight=1)
+
         api_header_frame = tk.Frame(self.api_frame, bg=self.COLOR_BG)
         api_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         api_header_frame.grid_columnconfigure(1, weight=1)
-        self.api_status_dot = tk.Canvas(api_header_frame, width=10, height=10, bg=self.COLOR_BG, highlightthickness=0)
+
+        self.api_status_dot = tk.Canvas(api_header_frame, width=10, height=10, bg=self.COLOR_BG,
+                                        highlightthickness=0)
         self.api_status_dot.grid(row=0, column=0, sticky='w', pady=4)
-        self.api_status_label = tk.Label(api_header_frame, text="API Status:", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.api_status_label = tk.Label(api_header_frame, text="API Status:", font=('Segoe UI', 9),
+                                         bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.api_status_label.grid(row=0, column=1, sticky='w', padx=5)
+
         self.search_entry = self.create_neumorphic_entry(api_header_frame)
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
-        search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
+
+        search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton',
+                                   command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
-        self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
-        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5))
+
+        self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton',
+                                             command=self.refresh_api_exe)
+        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0, 5))
+
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
-        self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 8), relief='flat', bd=2, highlightthickness=0)
+        self.api_log_text = scrolledtext.ScrolledText(
+            log_frame,
+            wrap=tk.WORD,
+            state='disabled',
+            bg=self.COLOR_BG,
+            fg=self.COLOR_TEXT,
+            font=('Consolas', 8),
+            relief='flat',
+            bd=2,
+            highlightthickness=0
+        )
         self.api_log_text.pack(fill='both', expand=True, padx=2, pady=2)
         self.api_log_text.tag_config('search', background=self.COLOR_ACCENT, foreground='white')
         self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
@@ -348,70 +376,84 @@ class App:
         self.zip_frame.place(relwidth=1, relheight=1)
         self.zip_frame.grid_rowconfigure(1, weight=1)
         self.zip_frame.grid_columnconfigure(0, weight=1)
+
         zip_header_frame = tk.Frame(self.zip_frame, bg=self.COLOR_BG)
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
-        self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0",
+                                        font=('Segoe UI', 9, 'bold'),
+                                        bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
-        
+
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
-        self.zip_tree.column('filename', anchor='w', width=240) 
-        self.zip_tree.column('status', anchor='w', width=100) 
+        self.zip_tree.column('filename', anchor='w', width=240)
+        self.zip_tree.column('status', anchor='w', width=100)
         self.zip_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
         self.zip_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
-        self.zip_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
-        self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
-        self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
-        
+        self.zip_tree.tag_configure('processing', foreground=self.COLOR_WARNING,
+                                    font=('Segoe UI', 9, 'bold'))
+        self.zip_tree.tag_configure('done', foreground=self.COLOR_SUCCESS,
+                                    font=('Segoe UI', 9, 'bold'))
+        self.zip_tree.tag_configure('error', foreground=self.COLOR_DANGER,
+                                    font=('Segoe UI', 9, 'bold'))
+
         # --- Page 4: APK Monitor ---
         self.apk_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.apk_frame.place(relwidth=1, relheight=1)
         self.apk_frame.grid_rowconfigure(1, weight=1)
         self.apk_frame.grid_columnconfigure(0, weight=1)
+
         apk_header_frame = tk.Frame(self.apk_frame, bg=self.COLOR_BG)
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
-        self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0",
+                                        font=('Segoe UI', 9, 'bold'),
+                                        bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
 
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
-        self.apk_tree.column('filename', anchor='w', width=240) 
-        self.apk_tree.column('status', anchor='w', width=100) 
+        self.apk_tree.column('filename', anchor='w', width=240)
+        self.apk_tree.column('status', anchor='w', width=100)
         self.apk_tree.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
         self.apk_tree.tag_configure('pending', foreground=self.COLOR_TEXT)
-        self.apk_tree.tag_configure('processing', foreground=self.COLOR_WARNING, font=('Segoe UI', 9, 'bold'))
-        self.apk_tree.tag_configure('done', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
-        self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
-        self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
+        self.apk_tree.tag_configure('processing', foreground=self.COLOR_WARNING,
+                                    font=('Segoe UI', 9, 'bold'))
+        self.apk_tree.tag_configure('done', foreground=self.COLOR_SUCCESS,
+                                    font=('Segoe UI', 9, 'bold'))
+        self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER,
+                                    font=('Segoe UI', 9, 'bold'))
+        self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT,
+                                    font=('Segoe UI', 9, 'italic'))
 
         # --- Page 5: Stream Screen ---
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
-        
-        # Use Grid to center and expand
-        self.stream_frame.grid_rowconfigure(0, weight=0) # Title
-        self.stream_frame.grid_rowconfigure(1, weight=1) # Stream Area (Expand)
-        self.stream_frame.grid_rowconfigure(2, weight=0) # Status Label
-        self.stream_frame.grid_columnconfigure(0, weight=1) 
-        
-        stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        stream_header.grid(row=0, column=0, pady=(0, 10))
-        
-        # 1. Frame for Embed (Black box)
-        # -- FIX: Use same bg color as app to hide black bars --
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg=self.COLOR_BG)
-        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5)
-        
-        # 2. Button Container
-        self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream", style='Raised.TButton', command=self._start_stream)
-        self.stream_start_btn.grid(row=2, column=0, pady=(5,5)) # Bottom
+        self.stream_frame.grid_rowconfigure(0, weight=0)
+        self.stream_frame.grid_rowconfigure(1, weight=1)
+        self.stream_frame.grid_rowconfigure(2, weight=0)
+        self.stream_frame.grid_columnconfigure(0, weight=1)
 
-        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        stream_header = tk.Label(self.stream_frame, text="Device Screen Stream",
+                                 font=('Segoe UI', 12, 'bold'),
+                                 bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        stream_header.grid(row=0, column=0, pady=(0, 10))
+
+        # Frame that will host scrcpy window
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black")
+        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5)
+
+        # Button to start stream
+        self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream",
+                                           style='Raised.TButton', command=self._start_stream)
+        self.stream_start_btn.grid(row=2, column=0, pady=(5, 5))
+
+        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to begin.",
+                                            font=('Segoe UI', 9),
+                                            bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.stream_status_label.grid(row=3, column=0, pady=(0, 10))
 
-    # --- Log File Methods ---
     def _setup_log_file(self):
         try:
             self.log_dir = os.path.join(self.base_path, "log")
@@ -425,7 +467,8 @@ class App:
             print(f"Error setting up log file: {e}")
 
     def _cleanup_old_logs(self):
-        if not self.log_dir: return
+        if not self.log_dir:
+            return
         try:
             cutoff = datetime.datetime.now() - datetime.timedelta(days=7)
             for filename in os.listdir(self.log_dir):
@@ -435,10 +478,11 @@ class App:
                         file_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
                         if file_date < cutoff:
                             os.remove(os.path.join(self.log_dir, filename))
-                    except ValueError: pass
+                    except ValueError:
+                        pass
         except Exception as e:
             print(f"Error during log cleanup: {e}")
-            
+
     def _load_log_for_today(self):
         if self.log_filepath and os.path.exists(self.log_filepath):
             try:
@@ -453,10 +497,12 @@ class App:
                 print(f"Error loading existing log: {e}")
 
     def _auto_save_log(self):
-        if not self.log_filepath: return
+        if not self.log_filepath:
+            return
         try:
             content = self.api_log_text.get("1.0", "end-1c")
-            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
+            threading.Thread(target=self._save_log_to_file_worker, args=(content,),
+                             daemon=True).start()
         except Exception as e:
             print(f"Error starting auto-save: {e}")
 
@@ -514,7 +560,8 @@ class App:
         import tkinter as tk
         fg_color = 'white' if is_accent else self.COLOR_TEXT
         bg_color = self.COLOR_ACCENT if is_accent else self.COLOR_BG
-        button = tk.Button(parent, text=text, command=command, font=('Segoe UI', 9, 'bold'),
+        button = tk.Button(parent, text=text, command=command,
+                           font=('Segoe UI', 9, 'bold'),
                            bg=bg_color, fg=fg_color,
                            activebackground=self.COLOR_SHADOW_DARK if not is_accent else self.COLOR_ACCENT,
                            activeforeground=self.COLOR_SHADOW_LIGHT if not is_accent else 'white',
@@ -534,23 +581,30 @@ class App:
         self.current_tab = tab_name
         if tab_name != "stream":
             self._stop_stream()
+
         for btn in self.all_side_buttons:
             btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
+
         if tab_name == 'device':
             self.device_frame.tkraise()
-            self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                                        fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'api':
             self.api_frame.tkraise()
-            self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                                     fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'zip':
             self.zip_frame.tkraise()
-            self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                                     fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'apk':
             self.apk_frame.tkraise()
-            self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                                     fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'stream':
             self.stream_frame.tkraise()
-            self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+            self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE,
+                                        fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
 
     def set_api_status(self, status):
         self.api_status = status
@@ -572,11 +626,13 @@ class App:
             self.api_log_text.tag_remove('search', '1.0', tk.END)
             self.api_log_text.tag_remove('current_search', '1.0', tk.END)
         if search_term:
-            start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+            start_pos = self.api_log_text.search(search_term, self.last_search_pos,
+                                                 stopindex=tk.END, nocase=True)
             if not start_pos:
                 self.last_search_pos = "1.0"
                 self.api_log_text.tag_remove('current_search', '1.0', tk.END)
-                start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+                start_pos = self.api_log_text.search(search_term, self.last_search_pos,
+                                                     stopindex=tk.END, nocase=True)
             if start_pos:
                 end_pos = f"{start_pos}+{len(search_term)}c"
                 self.api_log_text.tag_add('search', start_pos, end_pos)
@@ -594,7 +650,15 @@ class App:
             self.set_api_status("Offline")
             return
         try:
-            self.api_process = subprocess.Popen([api_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW, encoding='utf-8', errors='replace')
+            self.api_process = subprocess.Popen(
+                [api_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                encoding='utf-8',
+                errors='replace'
+            )
             threading.Thread(target=self.read_api_output, daemon=True).start()
             self.master.after(100, self.process_api_log_queue)
         except Exception as e:
@@ -648,13 +712,14 @@ class App:
         self.master.focus_force()
 
     def update_tray_status(self):
-        if not self.tray_icon: return
-        device_status_text = f"Device: {self.connected_device}" if self.connected_device else f"Device: Disconnected"
-        api_status_text = f"API: Online" if self.api_status == "Online" else f"API: Offline"
+        if not self.tray_icon:
+            return
+        device_status_text = f"Device: {self.connected_device}" if self.connected_device else "Device: Disconnected"
+        api_status_text = "API: Online" if self.api_status == "Online" else "API: Offline"
         self.tray_icon.menu = self.create_tray_menu(device_status_text, api_status_text)
         if self.connected_device:
             self.tray_icon.icon = create_android_icon(self.COLOR_SUCCESS)
-            self.tray_icon.title = f"HHT Android Connect: Connected"
+            self.tray_icon.title = "HHT Android Connect: Connected"
         else:
             self.tray_icon.icon = create_android_icon(self.COLOR_TEXT)
             self.tray_icon.title = "HHT Android Connect: Disconnected"
@@ -672,27 +737,33 @@ class App:
     def device_monitor_loop(self):
         while self.is_running:
             try:
-                result = subprocess.run([self.ADB_PATH, "devices"], 
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                        text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                
+                result = subprocess.run(
+                    [self.ADB_PATH, "devices"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
                 current_devices = set(self.parse_device_list(result.stdout))
 
                 if self.connected_device and self.connected_device not in current_devices:
                     if not self.is_disconnecting:
                         self.is_disconnecting = True
                         self.master.after(0, self.handle_auto_disconnect)
-                
+
                 if not self.connected_device:
                     newly_connected = current_devices - self.known_devices
                     if newly_connected:
                         device_to_connect = newly_connected.pop()
-                        threading.Thread(target=self._connect_device, args=(device_to_connect,), daemon=True).start()
-                
+                        threading.Thread(target=self._connect_device,
+                                         args=(device_to_connect,),
+                                         daemon=True).start()
+
                 self.known_devices = current_devices
             except Exception as e:
                 print(f"Error in device monitor loop: {e}")
-            
+
             time.sleep(3)
 
     def handle_auto_disconnect(self):
@@ -706,12 +777,12 @@ class App:
             self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
             self.master.after(0, self._clear_apk_monitor)
             self._stop_stream()
-        
+
     def _update_device_tree(self, all_known_devices):
         import tkinter as tk
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
-        
+
         if all_known_devices:
             for device_id in sorted(list(all_known_devices)):
                 status = "Connected" if device_id == self.connected_device else "Available"
@@ -723,60 +794,85 @@ class App:
     def _refresh_devices(self):
         from tkinter import messagebox
         try:
-            result = subprocess.run([self.ADB_PATH, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            result = subprocess.run(
+                [self.ADB_PATH, "devices"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             output = result.stdout
             devices = self.parse_device_list(output)
             all_known_devices = set(devices)
             if self.connected_device:
                 all_known_devices.add(self.connected_device)
-            
+
             self.master.after(0, self._update_device_tree, all_known_devices)
         except Exception as e:
-            self.master.after(0, lambda: messagebox.showerror("Error", f"An error occurred while refreshing devices:\n{e}"))
+            self.master.after(0, lambda: messagebox.showerror(
+                "Error",
+                f"An error occurred while refreshing devices:\n{e}"
+            ))
         finally:
             self.master.after(0, self.refresh_button.config, {'state': 'normal'})
 
     def _connect_device(self, device_id):
         from tkinter import messagebox
         try:
-            result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            
+            result = subprocess.run(
+                [self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
                 self.is_disconnecting = False
-                self.master.after(0, self.show_notification, f"Device Connected:\n{device_id}", True)
+                self.master.after(0, self.show_notification,
+                                  f"Device Connected:\n{device_id}", True)
                 self.master.after(0, self.disconnect_button.config, {'state': 'normal'})
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
-                
                 self.master.after(0, self._clear_apk_monitor)
-                self.master.after(100, self._scan_existing_apk_files) 
-                
+                self.master.after(100, self._scan_existing_apk_files)
+
             elif result.returncode != 0:
-                self.master.after(0, lambda: messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}"))
+                self.master.after(0, lambda: messagebox.showerror(
+                    "Error",
+                    f"Failed to connect:\n{result.stderr}"
+                ))
         except Exception as e:
-            self.master.after(0, lambda: messagebox.showerror("Error", f"An error occurred during connection:\n{e}"))
+            self.master.after(0, lambda: messagebox.showerror(
+                "Error",
+                f"An error occurred during connection:\n{e}"
+            ))
         finally:
             self.master.after(0, self.connect_button.config, {'state': 'normal'})
 
     def _disconnect_device(self):
         from tkinter import messagebox
-        if not self.connected_device: return
+        if not self.connected_device:
+            return
         try:
-            result = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            result = subprocess.run(
+                [self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             if result.returncode == 0:
                 device_id = self.connected_device
                 self.connected_device = None
                 self.disconnect_button.config(state='disabled')
                 self.refresh_devices()
                 self.update_tray_status()
-                self.show_notification(f"Device Disconnected:\n{device_id}", is_connected=False)
-                
+                self.show_notification(f"Device Disconnected:\n{device_id}",
+                                       is_connected=False)
                 self._clear_apk_monitor()
                 self._stop_stream()
-                
             else:
                 messagebox.showerror("Error", f"Failed to disconnect:\n{result.stderr}")
         except Exception as e:
@@ -784,7 +880,6 @@ class App:
         finally:
             self.disconnect_button.config(state='normal')
 
-    # --- ADB Helper Methods ---
     def get_adb_path(self):
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -804,10 +899,17 @@ class App:
     def check_adb(self):
         from tkinter import messagebox
         try:
-            subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run(
+                [self.ADB_PATH, "version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             return True
         except FileNotFoundError:
-            messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
+            messagebox.showerror("ADB Error",
+                                 f"ADB executable not found at the expected path: {self.ADB_PATH}")
             return False
         except Exception:
             return False
@@ -815,7 +917,12 @@ class App:
     def start_adb_server(self):
         from tkinter import messagebox
         try:
-            subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run(
+                [self.ADB_PATH, "start-server"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
         except Exception as e:
             messagebox.showerror("Error", f"Could not start ADB server:\n{e}")
             self.master.quit()
@@ -844,16 +951,20 @@ class App:
         selected_device = device_details['values'][0]
 
         if self.connected_device == selected_device:
-            messagebox.showinfo("Already Connected", f"Device {selected_device} is already connected.")
+            messagebox.showinfo("Already Connected",
+                                f"Device {selected_device} is already connected.")
             return
-        
+
         if self.connected_device is not None:
-            messagebox.showwarning("Device Already Connected", 
-                                  f"Device {self.connected_device} is already connected.\n\n"
-                                  f"Please click 'Disconnect' first before connecting a new device.")
+            messagebox.showwarning(
+                "Device Already Connected",
+                f"Device {self.connected_device} is already connected.\n\n"
+                f"Please click 'Disconnect' first before connecting a new device."
+            )
             return
-        
-        threading.Thread(target=self._connect_device, args=(selected_device,), daemon=True).start()
+
+        threading.Thread(target=self._connect_device, args=(selected_device,),
+                         daemon=True).start()
 
     def disconnect_device(self):
         from tkinter import messagebox
@@ -862,40 +973,56 @@ class App:
             return
         threading.Thread(target=self._disconnect_device, daemon=True).start()
 
-    # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
         from tkinter import messagebox
         config_path = os.path.join(self.base_path, "configs", "config.ini")
         config = configparser.ConfigParser()
-        
+
         if not os.path.exists(config_path):
             print(f"Error: Config file not found at {config_path}")
-            messagebox.showerror("Config Error", f"Configuration file not found. Please create it at:\n{config_path}")
+            messagebox.showerror(
+                "Config Error",
+                f"Configuration file not found. Please create it at:\n{config_path}"
+            )
             return False
-            
+
         try:
             config.read(config_path)
-            
+
             try:
                 self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
                 if not os.path.exists(self.zip_monitor_path):
-                    messagebox.showwarning("Config Warning", f"The Zip monitor path does not exist:\n{self.zip_monitor_path}\n\nThe Zip service will not start.")
+                    messagebox.showwarning(
+                        "Config Warning",
+                        f"The Zip monitor path does not exist:\n{self.zip_monitor_path}\n\n"
+                        f"The Zip service will not start."
+                    )
                 else:
                     print(f"Monitoring Zip Outbox path: {self.zip_monitor_path}")
             except KeyError:
-                messagebox.showerror("Config Error", "DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini")
-                
+                messagebox.showerror(
+                    "Config Error",
+                    "DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini"
+                )
+
             try:
                 self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
                 if not os.path.exists(self.apk_monitor_path):
-                    messagebox.showwarning("Config Warning", f"The APK monitor path does not exist:\n{self.apk_monitor_path}\n\nThe APK service will not start.")
+                    messagebox.showwarning(
+                        "Config Warning",
+                        f"The APK monitor path does not exist:\n{self.apk_monitor_path}\n\n"
+                        f"The APK service will not start."
+                    )
                 else:
                     print(f"Monitoring APK path: {self.apk_monitor_path}")
             except KeyError:
-                messagebox.showerror("Config Error", "MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
-                
+                messagebox.showerror(
+                    "Config Error",
+                    "MONITOR_PATH not found in [APK_INSTALLER] section of config.ini"
+                )
+
             return True
-            
+
         except Exception as e:
             messagebox.showerror("Config Error", f"Error loading config.ini file: {e}")
             return False
@@ -905,20 +1032,22 @@ class App:
             if self.zip_monitor_path and os.path.exists(self.zip_monitor_path):
                 zip_event_handler = ZipFileHandler(self)
                 self.zip_file_observer = Observer()
-                self.zip_file_observer.schedule(zip_event_handler, self.zip_monitor_path, recursive=False)
+                self.zip_file_observer.schedule(zip_event_handler, self.zip_monitor_path,
+                                                recursive=False)
                 self.zip_file_observer.start()
                 print("Zip monitoring service started.")
-            
+
             if self.apk_monitor_path and os.path.exists(self.apk_monitor_path):
                 apk_event_handler = ApkFileHandler(self)
                 self.apk_file_observer = Observer()
-                self.apk_file_observer.schedule(apk_event_handler, self.apk_monitor_path, recursive=False)
+                self.apk_file_observer.schedule(apk_event_handler, self.apk_monitor_path,
+                                                recursive=False)
                 self.apk_file_observer.start()
                 print("APK monitoring service started.")
 
     def _scan_existing_apk_files(self):
         if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path):
-            return 
+            return
 
         print(f"Scanning for existing APKs in: {self.apk_monitor_path}")
         try:
@@ -931,7 +1060,6 @@ class App:
         except Exception as e:
             print(f"Error scanning existing APKs: {e}")
 
-    # --- Zip Service Methods ---
     def _clear_zip_monitor(self):
         print("Clearing Zip Monitor...")
         try:
@@ -939,11 +1067,11 @@ class App:
                 self.zip_tree.delete(item)
         except Exception as e:
             print(f"Error clearing Zip tree: {e}")
-        
+
         self.zip_processed_count = 0
         self.zip_file_map.clear()
         self.processing_files.clear()
-        
+
         try:
             self.zip_count_label.config(text="Total Files Processed: 0")
         except Exception as e:
@@ -952,24 +1080,31 @@ class App:
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
-        
-        if filepath in self.processing_files: return
+
+        if filepath in self.processing_files:
+            return
         self.processing_files.add(filepath)
-        
-        item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
+
+        item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'),
+                                       tags=('pending',))
         self.zip_file_map[filepath] = item_id
-        threading.Thread(target=self.process_zip_file, args=(filepath,), daemon=True).start()
+        threading.Thread(target=self.process_zip_file, args=(filepath,),
+                         daemon=True).start()
 
     def _update_zip_status(self, item_id, status):
         try:
-            if not self.zip_tree.exists(item_id): return
+            if not self.zip_tree.exists(item_id):
+                return
             filename = self.zip_tree.item(item_id, 'values')[0]
             if status == "Processing":
-                self.zip_tree.item(item_id, values=(filename, 'Processing'), tags=('processing',))
+                self.zip_tree.item(item_id, values=(filename, 'Processing'),
+                                   tags=('processing',))
             elif status == "Done":
                 self.zip_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
                 self.zip_processed_count += 1
-                self.zip_count_label.config(text=f"Total Files Processed: {self.zip_processed_count}")
+                self.zip_count_label.config(
+                    text=f"Total Files Processed: {self.zip_processed_count}"
+                )
             elif status == "Error":
                 self.zip_tree.item(item_id, values=(filename, 'Error'), tags=('error',))
         except Exception as e:
@@ -986,49 +1121,56 @@ class App:
             return
 
         self.master.after(0, self._update_zip_status, item_id, "Processing")
-        
+
         for _ in range(5):
             try:
-                with open(zip_path, 'rb') as f: pass 
-                break 
-            except PermissionError: 
-                time.sleep(1) 
+                with open(zip_path, 'rb'):
+                    pass
+                break
+            except PermissionError:
+                time.sleep(1)
             except FileNotFoundError:
                 print(f"File {zip_path} disappeared while waiting, aborting.")
                 self.master.after(0, self._remove_from_processing_list, zip_path)
                 return
-        else: 
+        else:
             print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
             self.master.after(0, self._update_zip_status, item_id, "Error")
             self.master.after(0, self._remove_from_processing_list, zip_path)
             return
 
-        temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
+        temp_extract_dir = os.path.join(self.base_path, "tmp",
+                                        f"extract_{os.path.basename(zip_path)}")
         original_filename_with_ext = os.path.basename(zip_path)
         original_dir = os.path.dirname(zip_path)
-        
+
         try:
             filename_no_ext = original_filename_with_ext.replace('.zip', '')
             filename_parts = filename_no_ext.split('-')
             new_zip_path = zip_path
-            
+
             if len(filename_parts) == 5:
                 part_prefix = filename_parts[0]
                 part_branch = filename_parts[1]
                 part_zero = filename_parts[2]
                 part_date = filename_parts[3]
                 part_time = filename_parts[4]
-                part_export_date = time.strftime("%y%m%d") 
+                part_export_date = time.strftime("%y%m%d")
                 new_filename = f"{part_prefix}-{part_branch}-{part_zero}-{part_date}-{part_export_date}-{part_time}.zip"
                 new_zip_path = os.path.join(original_dir, new_filename)
-                print(f"Original name: {original_filename_with_ext}, New name: {new_filename}")
-            
+                print(
+                    f"Original name: {original_filename_with_ext}, New name: {new_filename}"
+                )
+
             elif len(filename_parts) == 6:
                 print(f"Filename {original_filename_with_ext} is already in the correct format.")
                 new_zip_path = zip_path
-            
+
             else:
-                print(f"Warning: Unknown filename format '{original_filename_with_ext}'. Re-zipping with original name.")
+                print(
+                    f"Warning: Unknown filename format '{original_filename_with_ext}'. "
+                    f"Re-zipping with original name."
+                )
                 new_zip_path = zip_path
 
             os.makedirs(temp_extract_dir, exist_ok=True)
@@ -1045,50 +1187,50 @@ class App:
                         dir_path = os.path.join(root, d)
                         arcname = os.path.relpath(dir_path, temp_extract_dir)
                         arcname = arcname.replace(os.path.sep, '/') + '/'
-                        
+
                         zinfo = zipfile.ZipInfo(arcname)
                         zinfo.create_system = 3
                         zinfo.external_attr = (0o755 << 16) | 0x10
                         zinfo.compress_type = zipfile.ZIP_DEFLATED
                         zip_ref.writestr(zinfo, "")
-                        
+
                     for file in files:
                         file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, temp_extract_dir) 
-                        arcname = arcname.replace(os.path.sep, '/') 
-                        
+                        arcname = os.path.relpath(file_path, temp_extract_dir)
+                        arcname = arcname.replace(os.path.sep, '/')
+
                         zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
-                        zinfo.create_system = 3 
-                        zinfo.external_attr = (0o644 << 16) 
-                        
+                        zinfo.create_system = 3
+                        zinfo.external_attr = (0o644 << 16)
+
                         with open(file_path, "rb") as source:
-                            zip_ref.writestr(zinfo, source.read()) 
-            
+                            zip_ref.writestr(zinfo, source.read())
+
             print(f"Successfully re-packaged to: {new_zip_path}")
             self.master.after(0, self._update_zip_status, item_id, "Done")
 
         except Exception as e:
             print(f"Error processing zip file {zip_path}: {e}")
             self.master.after(0, self._update_zip_status, item_id, "Error")
-        
+
         finally:
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
-            self.master.after(0, self._remove_from_processing_list, zip_path) 
-            
-    # --- APK Installer Methods ---
+            self.master.after(0, self._remove_from_processing_list, zip_path)
+
     def _clear_apk_monitor(self):
+        """Clears the APK monitor list and resets the state."""
         print("Clearing APK Monitor...")
         try:
             for item in self.apk_tree.get_children():
                 self.apk_tree.delete(item)
         except Exception as e:
             print(f"Error clearing APK tree (window might be closing): {e}")
-        
+
         self.apk_processed_count = 0
         self.apk_file_map.clear()
         self.apk_processing_files.clear()
-        
+
         try:
             self.apk_count_label.config(text="Total APKs Processed: 0")
         except Exception as e:
@@ -1097,27 +1239,36 @@ class App:
     def _add_apk_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
-        
+
         if filepath in self.apk_file_map:
-             print(f"APK {filename} is already in the processing queue or done.")
-             return
-        
+            print(f"APK {filename} is already in the processing queue or done.")
+            return
+
         self.apk_processing_files.add(filepath)
-        
-        item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
-        self.apk_file_map[filepath] = item_id 
-        threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
-        
+
+        item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'),
+                                       tags=('pending',))
+        self.apk_file_map[filepath] = item_id
+        threading.Thread(target=self._run_apk_install, args=(filepath, item_id),
+                         daemon=True).start()
+
     def _get_device_version(self, pkg_name):
         if not self.connected_device:
             return 0
-            
+
         try:
             device_id = self.connected_device
             command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
-            
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-            
+
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
             if result.stdout:
                 for line in result.stdout.splitlines():
                     if "versionCode=" in line:
@@ -1125,25 +1276,27 @@ class App:
                         version_code = int(version_str.split(' ')[0])
                         print(f"Found device version {version_code} for {pkg_name}")
                         return version_code
-            
+
             print(f"Package {pkg_name} not found on device.")
-            return 0 
+            return 0
         except Exception as e:
             print(f"Error getting device version: {e}")
             return 0
 
     def _run_apk_install(self, apk_path, item_id):
         self.master.after(0, self._update_apk_status, item_id, "Checking...")
-        
+
         for _ in range(5):
             try:
-                with open(apk_path, 'rb') as f: pass
+                with open(apk_path, 'rb'):
+                    pass
                 break
             except PermissionError:
                 time.sleep(1)
             except FileNotFoundError:
                 print(f"APK {apk_path} disappeared, aborting.")
-                self.master.after(0, self._update_apk_status, item_id, "Error: File disappeared")
+                self.master.after(0, self._update_apk_status, item_id,
+                                  "Error: File disappeared")
                 self.master.after(0, self._remove_from_apk_processing_list, apk_path)
                 return
         else:
@@ -1162,7 +1315,7 @@ class App:
             self.master.after(0, self._update_apk_status, item_id, "Error: Invalid APK")
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
-            
+
         wait_time = 0
         while not self.connected_device and self.is_running and wait_time < 10:
             print(f"APK Install: Waiting for device... ({wait_time}s)")
@@ -1175,14 +1328,14 @@ class App:
             self.master.after(0, self._update_apk_status, item_id, "Error: No device")
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
             return
-            
+
         device_version = self._get_device_version(pkg_name)
-        
+
         try:
             install_needed = False
             install_reason = ""
             status_tag = ""
-            
+
             if device_version == 0:
                 install_needed = True
                 install_reason = f"Installing (v{pc_version})..."
@@ -1193,72 +1346,90 @@ class App:
                 status_tag = f"Skipped (v{pc_version} installed)"
             else:
                 status_tag = f"Skipped (Newer v{device_version})"
-                
+
             if install_needed:
                 self.master.after(0, self._update_apk_status, item_id, install_reason)
                 device_id = self.connected_device
                 command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
-                
-                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-                
+
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
                 if "Success" in result.stdout:
                     self.master.after(0, self._update_apk_status, item_id, "Success")
                 else:
                     error_message = (result.stdout or result.stderr).strip().split('\n')[-1]
-                    if not error_message: error_message = "Unknown error"
-                    self.master.after(0, self._update_apk_status, item_id, f"Error: {error_message}")
+                    if not error_message:
+                        error_message = "Unknown error"
+                    self.master.after(0, self._update_apk_status, item_id,
+                                      f"Error: {error_message}")
             elif status_tag:
-                 self.master.after(0, self._update_apk_status, item_id, status_tag)
-            
+                self.master.after(0, self._update_apk_status, item_id, status_tag)
+
         except Exception as e:
             self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
         finally:
             self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            
+
     def _update_apk_status(self, item_id, status_message):
         try:
             if not self.apk_tree.exists(item_id):
                 return
-                
+
             filename = self.apk_tree.item(item_id, 'values')[0]
-            
-            if "Processing" in status_message or "Installing" in status_message or "Upgrading" in status_message or "Waiting" in status_message:
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('processing',))
+
+            if ("Processing" in status_message or "Installing" in status_message or
+                    "Upgrading" in status_message or "Waiting" in status_message):
+                self.apk_tree.item(item_id, values=(filename, status_message),
+                                   tags=('processing',))
             elif "Success" in status_message:
                 self.apk_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
                 self.apk_processed_count += 1
-                self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
+                self.apk_count_label.config(
+                    text=f"Total APKs Processed: {self.apk_processed_count}"
+                )
             elif "Skipped" in status_message:
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('skipped',))
+                self.apk_tree.item(item_id, values=(filename, status_message),
+                                   tags=('skipped',))
             else:
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
+                self.apk_tree.item(item_id, values=(filename, status_message),
+                                   tags=('error',))
         except Exception as e:
             print(f"Error updating APK status in UI (item may be gone): {e}")
-            
+
     def _remove_from_apk_processing_list(self, filepath):
         if filepath in self.apk_processing_files:
             self.apk_processing_files.remove(filepath)
-            
-    # --- NEW: Screen Streaming Methods ---
+
+    # --- Screen Streaming Methods (REVISED EMBED ONLY) ---
     def _start_stream(self):
+        """Starts the scrcpy stream and embeds it."""
         from tkinter import messagebox
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
             return
-        
+
         if self.scrcpy_process:
             print("Stream already running.")
             return
-            
+
         if not os.path.exists(self.SCRCPY_PATH):
             print(f"scrcpy not found at: {self.SCRCPY_PATH}")
-            messagebox.showerror("Stream Error", f"scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
+            messagebox.showerror("Stream Error",
+                                 "scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
             self.stream_status_label.config(text="Error: scrcpy.exe not found.")
             return
 
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
-        
+
+        # ใช้ ADB ตัวเดียวกับแอป
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
 
@@ -1268,79 +1439,98 @@ class App:
             "--window-title=HHT_STREAM",
             "--window-x=0", "--window-y=0",
             "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) 
-        
+        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
+
+        # หา window scrcpy แล้ว embed ด้วย thread แยก
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
     def _embed_stream_window(self):
+        """Worker thread to find the scrcpy window and embed it into Tk frame."""
         try:
             hwnd = 0
-            retries = 20 
+            retries = 20
+            # รอ scrcpy สร้าง window ชื่อ HHT_STREAM
             while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
                 hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
                 if hwnd == 0:
                     retries -= 1
                     time.sleep(0.5)
-            
+
             if hwnd == 0:
                 print("Could not find HHT_STREAM window. Aborting embed.")
                 if self.is_running:
-                    self.stream_status_label.config(text="Error: Could not start stream. Try reconnecting device.")
-                self._stop_stream()
+                    self.master.after(
+                        0,
+                        self.stream_status_label.config,
+                        {"text": "Error: Could not start stream. Try reconnecting device."}
+                    )
+                self.master.after(0, self._stop_stream)
                 return
 
+            # ได้ HWND ของ scrcpy แล้ว
             frame_id = self.stream_embed_frame.winfo_id()
-            
-            self.master.update_idletasks() 
+
+            # ให้ Tk คำนวณ layout frame ให้เรียบร้อยก่อน
+            self.master.update_idletasks()
             frame_width = self.stream_embed_frame.winfo_width()
             frame_height = self.stream_embed_frame.winfo_height()
+            if frame_width <= 0 or frame_height <= 0:
+                frame_width, frame_height = 400, 600  # fallback กันเคสแปลก ๆ
 
-            rect = ctypes.wintypes.RECT()
-            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            scrcpy_width = rect.right - rect.left
-            scrcpy_height = rect.bottom - rect.top
-            
-            ratio = frame_height / scrcpy_height
-            new_height = frame_height
-            new_width = int(scrcpy_width * ratio)
-
-            x_offset = (frame_width - new_width) // 2
-            y_offset = 0 
-            
+            # เปลี่ยน parent ของ scrcpy window ให้มาอยู่ใน frame นี้
             ctypes.windll.user32.SetParent(hwnd, frame_id)
-            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, new_width, new_height, True)
-            
+
+            # ขยายให้เต็มกรอบ frame ตรง ๆ (ไม่ต้องคำนวณ ratio เพิ่ม)
+            ctypes.windll.user32.MoveWindow(
+                hwnd,
+                0,  # x
+                0,  # y
+                int(frame_width),
+                int(frame_height),
+                True
+            )
+
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
-                self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
+                self.master.after(
+                    0,
+                    self.stream_status_label.config,
+                    {"text": f"Streaming device: {self.connected_device}"}
+                )
 
         except Exception as e:
             print(f"Error embedding window: {e}")
-            if self.is_running: 
-                self.stream_status_label.config(text="Error: Failed to embed stream.")
+            if self.is_running:
+                self.master.after(
+                    0,
+                    self.stream_status_label.config,
+                    {"text": "Error: Failed to embed stream."}
+                )
 
     def _stop_stream(self):
         if self.scrcpy_process:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            if self.is_running: 
+            if self.is_running:
                 try:
+                    import tkinter as tk
                     self.stream_status_label.config(text="Stream stopped.")
-                except tk.TclError:
-                    pass 
+                except Exception:
+                    pass
 
     def on_app_quit(self):
         self.is_running = False
-        
+
         try:
             content = self.api_log_text.get("1.0", "end-1c")
-            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
+            threading.Thread(target=self._save_log_to_file_worker, args=(content,),
+                             daemon=True).start()
         except Exception as e:
             print(f"Error saving log on quit: {e}")
-        
+
         self._stop_stream()
-        
+
         if self.zip_file_observer:
             self.zip_file_observer.stop()
             self.zip_file_observer.join()
@@ -1351,15 +1541,19 @@ class App:
             self.apk_file_observer.join()
             print("APK monitoring service stopped.")
 
-        if self.tray_icon: self.tray_icon.stop()
-        if self.api_process: self.api_process.terminate()
-        
+        if self.tray_icon:
+            self.tray_icon.stop()
+        if self.api_process:
+            self.api_process.terminate()
+
         if self.connected_device:
             try:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            except Exception as e: print(f"Could not disconnect on exit: {e}")
-        
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+            except Exception as e:
+                print(f"Could not disconnect on exit: {e}")
+
         try:
             print("Shutting down ADB server...")
             subprocess.run([self.ADB_PATH, "kill-server"],
@@ -1367,12 +1561,15 @@ class App:
                            text=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
             print(f"Error killing ADB server: {e}")
-        
+
         try:
-            if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
-        except Exception as e: print(f"Could not remove lock file: {e}")
+            if os.path.exists(self.lock_file_path):
+                os.remove(self.lock_file_path)
+        except Exception as e:
+            print(f"Could not remove lock file: {e}")
 
         self.master.destroy()
+
 
 if __name__ == "__main__":
     import tkinter as tk
@@ -1387,18 +1584,23 @@ if __name__ == "__main__":
 
     if os.path.exists(lock_file):
         try:
-            with open(lock_file, 'r') as f: pid = int(f.read().strip())
+            with open(lock_file, 'r') as f:
+                pid = int(f.read().strip())
             if psutil.pid_exists(pid):
-                messagebox.showinfo("Already Running", "HHT Android Connect is already running in the system tray.")
+                messagebox.showinfo("Already Running",
+                                    "HHT Android Connect is already running in the system tray.")
                 sys.exit()
-            else: print("Stale lock file found. The application will start.")
-        except (IOError, ValueError): print("Corrupt lock file found. The application will start.")
+            else:
+                print("Stale lock file found. The application will start.")
+        except (IOError, ValueError):
+            print("Corrupt lock file found. The application will start.")
 
-    with open(lock_file, 'w') as f: f.write(str(os.getpid()))
+    with open(lock_file, 'w') as f:
+        f.write(str(os.getpid()))
 
     try:
         root = tk.Tk()
-        app = App(root, lock_file_path=lock_file) 
+        app = App(root, lock_file_path=lock_file)
         root.protocol('WM_DELETE_WINDOW', app.hide_window)
         initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
         icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
@@ -1406,5 +1608,6 @@ if __name__ == "__main__":
         threading.Thread(target=icon.run, daemon=True).start()
         root.mainloop()
     except Exception as e:
-        if os.path.exists(lock_file): os.remove(lock_file)
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
         messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
