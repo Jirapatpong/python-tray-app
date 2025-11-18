@@ -199,7 +199,7 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        self._setup_log_file()
+        self._setup_log_file() # This now cleans logs, sets path, and loads today's log
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
@@ -417,8 +417,8 @@ class App:
             self.log_dir = os.path.join(self.base_path, "log")
             os.makedirs(self.log_dir, exist_ok=True)
             
-            # Run cleanup
-            self._cleanup_old_logs()
+            # --- OPTIMIZATION: Run cleanup in background ---
+            threading.Thread(target=self._cleanup_old_logs, daemon=True).start()
 
             # Set path for today
             self.current_log_date = time.strftime("%Y-%m-%d")
@@ -470,13 +470,36 @@ class App:
             except Exception as e:
                 print(f"Error loading existing log: {e}")
 
+    # --- OPTIMIZATION: This function now only gets text and starts a thread ---
     def _auto_save_log(self):
-        """Saves the current log, handling daily rollover."""
+        """Gets log content from UI and passes it to a worker thread for saving."""
         if not self.log_filepath:
             return
         
         try:
+            # 1. Get content from UI (Main thread)
             content = self.api_log_text.get("1.0", "end-1c")
+            
+            # 2. Pass content to background thread for file I/O
+            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
+                
+        except Exception as e:
+            print(f"Error starting auto-save: {e}")
+
+    # --- NEW: Helper to clear widget from main thread ---
+    def _clear_api_log_widget(self):
+        """Helper to clear the API log widget from the main thread."""
+        try:
+            self.api_log_text.config(state='normal')
+            self.api_log_text.delete('1.0', 'end')
+            self.api_log_text.config(state='disabled')
+        except Exception as e:
+            print(f"Error clearing API log widget: {e}")
+
+    # --- NEW: Worker function for log saving ---
+    def _save_log_to_file_worker(self, content):
+        """Worker thread to handle the actual file I/O for log saving."""
+        try:
             today_date_str = time.strftime("%Y-%m-%d")
             
             # Check for date change (midnight rollover)
@@ -488,26 +511,24 @@ class App:
                     with open(self.log_filepath, 'w', encoding='utf-8') as f:
                         f.write(formatted_content)
                 
-                # 2. Update path to today's file
+                # 2. Update path to today's file (thread-safe assignment)
                 self.current_log_date = today_date_str
                 filename = f"api_log_{self.current_log_date}.txt"
                 self.log_filepath = os.path.join(self.log_dir, filename)
                 
-                # 3. Clear the log widget for the new day
-                self.api_log_text.config(state='normal')
-                self.api_log_text.delete('1.0', 'end')
-                self.api_log_text.config(state='disabled')
+                # 3. Clear the log widget (must be scheduled on main thread)
+                self.master.after(0, self._clear_api_log_widget)
                 print(f"Rolled over to new log file: {self.log_filepath}")
                 
             else:
-                # No date change, just overwrite today's file with current widget content
+                # No date change, just overwrite today's file
                 if content.strip():
                     formatted_content = self._format_sql_log(content)
                     with open(self.log_filepath, 'w', encoding='utf-8') as f:
                         f.write(formatted_content)
                         
         except Exception as e:
-            print(f"Error during auto-save: {e}")
+            print(f"Error during auto-save worker: {e}")
 
     def _periodic_log_save(self):
         """Calls the auto-save method and reschedules itself."""
@@ -1309,7 +1330,6 @@ class App:
             self.apk_processing_files.remove(filepath)
             
     # --- NEW: Screen Streaming Methods ---
-    
     def _start_stream(self):
         """Starts the scrcpy stream and embeds it (auto-fit height of embed area)."""
         from tkinter import messagebox
@@ -1330,32 +1350,29 @@ class App:
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
 
-        # Let Tk calculate the latest frame size
-        self.master.update_idletasks()
-        frame_h = max(1, self.stream_embed_frame.winfo_height())
-
         # Configure environment so scrcpy uses our bundled adb
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
+        
+        # Get the real aspect ratio
+        src_w, src_h = self._get_device_resolution()
+        if src_w and src_h:
+            self._source_aspect = src_w / src_h
+        else:
+            self._source_aspect = None # Will fallback
 
-        # Let scrcpy scale with max-size ~= height of our embed frame
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size", str(frame_h),
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
 
-        # Reset source aspect; will be filled when we know device/window size
-        self._source_aspect = None
-
-        # Bind resize of the embed frame so we can keep the stream auto-fitted
-        def _on_frame_resize(event):
-            self._resize_stream_to_fit_height()
-
-        # Unbind any old handler first
+        # Reset window handle
+        self.stream_window_id = None
+        
+        # Unbind previous resize handler if it exists
         if self._stream_resize_bind_id is not None:
             try:
                 self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
@@ -1363,14 +1380,11 @@ class App:
                 pass
             self._stream_resize_bind_id = None
 
-        self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", _on_frame_resize)
-
         # Start a thread to find and embed the window
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
-    
     def _embed_stream_window(self):
-        """Find scrcpy window and embed it, then size/center to fit height."""
+        """Find scrcpy window and embed it, then bind resize."""
         import ctypes
         try:
             hwnd = 0
@@ -1390,23 +1404,27 @@ class App:
 
             self.stream_window_id = hwnd
 
-            # Try to get real device resolution for aspect ratio
-            src_w, src_h = self._get_device_resolution()
-            if src_w and src_h:
-                self._source_aspect = src_w / src_h
-            else:
-                # Fallback: use current scrcpy window rect
+            # Get the handle (ID) of our Tkinter frame
+            frame_id = self.stream_embed_frame.winfo_id()
+
+            # Re-parent the scrcpy window into our frame
+            ctypes.windll.user32.SetParent(hwnd, frame_id)
+            
+            # If we didn't get aspect from device, get it from window
+            if self._source_aspect is None:
                 rect = ctypes.wintypes.RECT()
                 ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
                 scrcpy_w = max(1, rect.right - rect.left)
                 scrcpy_h = max(1, rect.bottom - rect.top)
                 self._source_aspect = scrcpy_w / scrcpy_h
 
-            # Re-parent into our Tkinter frame
-            frame_id = self.stream_embed_frame.winfo_id()
-            ctypes.windll.user32.SetParent(hwnd, frame_id)
-
-            # First sizing
+            # Bind the resize event to our frame
+            def _on_frame_resize(event):
+                self._resize_stream_to_fit_height()
+            
+            self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", _on_frame_resize)
+            
+            # Trigger first resize
             self._resize_stream_to_fit_height()
 
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
@@ -1417,8 +1435,6 @@ class App:
             print(f"Error embedding window: {e}")
             if self.is_running:
                 self.stream_status_label.config(text="Error: Failed to embed stream.")
-
-    
 
     def _get_device_resolution(self):
         """
@@ -1451,16 +1467,15 @@ class App:
             pass
         return (0, 0)
 
-    def _resize_stream_to_fit_height(self):
+    def _resize_stream_to_fit_height(self, event=None):
         """Resize & center scrcpy window so that it always fits the frame HEIGHT."""
         import ctypes
         if not self.stream_window_id or not self._source_aspect:
             return
 
-        self.master.update_idletasks()
         frame_w = max(1, self.stream_embed_frame.winfo_width())
         frame_h = max(1, self.stream_embed_frame.winfo_height())
-
+        
         # Fit by height: new_h = frame_h, new_w = aspect * frame_h
         new_h = frame_h
         new_w = int(self._source_aspect * new_h)
@@ -1472,12 +1487,13 @@ class App:
 
         x = (frame_w - new_w) // 2
         y = (frame_h - new_h) // 2
-        if x < 0:
-            x = 0
-        if y < 0:
-            y = 0
-
-        ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, new_w, new_h, True)
+        if x < 0: x = 0
+        if y < 0: y = 0
+            
+        try:
+            ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, new_w, new_h, True)
+        except Exception as e:
+            print(f"Error resizing stream window: {e}")
 
     def _stop_stream(self):
         """Stops the scrcpy stream process if it's running."""
@@ -1493,14 +1509,14 @@ class App:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            if self.is_running:  # Check if app is still running
+            if self.is_running: # Check if app is still running
                 try:
                     self.stream_status_label.config(text="Stream stopped.")
                 except tk.TclError:
-                    pass  # Window already destroyed
+                    pass # Window already destroyed
 
     # --- Application Exit Method ---
-def on_app_quit(self):
+    def on_app_quit(self):
         self.is_running = False
         
         # --- Run log save in background ---
@@ -1531,7 +1547,7 @@ def on_app_quit(self):
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
-        # --- NEW FIX: Explicitly kill the ADB server ---
+        # --- FIX: Explicitly kill the ADB server ---
         try:
             print("Shutting down ADB server...")
             subprocess.run([self.ADB_PATH, "kill-server"],
@@ -1572,8 +1588,7 @@ if __name__ == "__main__":
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
     # --- Launch Application ---
-    # เราได้ลบ is_admin() และ else-block ที่ใช้ runas ออกไปแล้ว
-    # เพราะเราจะสั่งให้ PyInstaller บังคับรันด้วยสิทธิ์ Admin ตั้งแต่แรก
+    # Removed is_admin() check, PyInstaller handles this with --uac-admin
     try:
         root = tk.Tk()
         app = App(root, lock_file_path=lock_file) 
