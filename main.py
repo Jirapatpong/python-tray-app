@@ -1500,9 +1500,16 @@ class App:
                     pass  # Window already destroyed
 
     # --- Application Exit Method ---
-    def on_app_quit(self):
+def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log()
+        
+        # --- Run log save in background ---
+        try:
+            content = self.api_log_text.get("1.0", "end-1c")
+            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
+        except Exception as e:
+            print(f"Error saving log on quit: {e}")
+        
         self._stop_stream() # Stop stream on quit
         
         if self.zip_file_observer:
@@ -1523,6 +1530,16 @@ class App:
                 subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e: print(f"Could not disconnect on exit: {e}")
+        
+        # --- NEW FIX: Explicitly kill the ADB server ---
+        try:
+            print("Shutting down ADB server...")
+            subprocess.run([self.ADB_PATH, "kill-server"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception as e:
+            print(f"Error killing ADB server: {e}")
+        # --- END FIX ---
         
         try:
             if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
