@@ -1554,25 +1554,18 @@ if __name__ == "__main__":
 
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
-    # --- Admin Check ---
-    def is_admin():
-        try: return ctypes.windll.shell32.IsUserAnAdmin()
-        except: return False
-
     # --- Launch Application ---
-    if is_admin():
-        try:
-            root = tk.Tk()
-            app = App(root, lock_file_path=lock_file) 
-            root.protocol('WM_DELETE_WINDOW', app.hide_window)
-            initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
-            icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
-            app.tray_icon = icon
-            threading.Thread(target=icon.run, daemon=True).start()
-            root.mainloop()
-        except Exception as e:
-            if os.path.exists(lock_file): os.remove(lock_file)
-            messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
-    else:
+    # เราได้ลบ is_admin() และ else-block ที่ใช้ runas ออกไปแล้ว
+    # เพราะเราจะสั่งให้ PyInstaller บังคับรันด้วยสิทธิ์ Admin ตั้งแต่แรก
+    try:
+        root = tk.Tk()
+        app = App(root, lock_file_path=lock_file) 
+        root.protocol('WM_DELETE_WINDOW', app.hide_window)
+        initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
+        icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
+        app.tray_icon = icon
+        threading.Thread(target=icon.run, daemon=True).start()
+        root.mainloop()
+    except Exception as e:
         if os.path.exists(lock_file): os.remove(lock_file)
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
