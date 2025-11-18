@@ -116,8 +116,6 @@ class App:
         # --- NEW: Screen streaming variables ---
         self.scrcpy_process = None
         self.stream_window_id = None
-        self._source_aspect = None  # width/height of device screen
-        self._stream_resize_bind_id = None
         self.current_tab = "device" # Track current tab
         
         if getattr(sys, 'frozen', False):
@@ -199,7 +197,7 @@ class App:
         self.monitor_thread = threading.Thread(target=self.device_monitor_loop, daemon=True)
         self.monitor_thread.start()
         self.start_api_exe()
-        self._setup_log_file() # This now cleans logs, sets path, and loads today's log
+        self._setup_log_file()
         self._periodic_log_save()
         self._start_monitoring_services()
         self._scan_existing_apk_files()
@@ -417,8 +415,8 @@ class App:
             self.log_dir = os.path.join(self.base_path, "log")
             os.makedirs(self.log_dir, exist_ok=True)
             
-            # --- OPTIMIZATION: Run cleanup in background ---
-            threading.Thread(target=self._cleanup_old_logs, daemon=True).start()
+            # Run cleanup
+            self._cleanup_old_logs()
 
             # Set path for today
             self.current_log_date = time.strftime("%Y-%m-%d")
@@ -470,36 +468,13 @@ class App:
             except Exception as e:
                 print(f"Error loading existing log: {e}")
 
-    # --- OPTIMIZATION: This function now only gets text and starts a thread ---
     def _auto_save_log(self):
-        """Gets log content from UI and passes it to a worker thread for saving."""
+        """Saves the current log, handling daily rollover."""
         if not self.log_filepath:
             return
         
         try:
-            # 1. Get content from UI (Main thread)
             content = self.api_log_text.get("1.0", "end-1c")
-            
-            # 2. Pass content to background thread for file I/O
-            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
-                
-        except Exception as e:
-            print(f"Error starting auto-save: {e}")
-
-    # --- NEW: Helper to clear widget from main thread ---
-    def _clear_api_log_widget(self):
-        """Helper to clear the API log widget from the main thread."""
-        try:
-            self.api_log_text.config(state='normal')
-            self.api_log_text.delete('1.0', 'end')
-            self.api_log_text.config(state='disabled')
-        except Exception as e:
-            print(f"Error clearing API log widget: {e}")
-
-    # --- NEW: Worker function for log saving ---
-    def _save_log_to_file_worker(self, content):
-        """Worker thread to handle the actual file I/O for log saving."""
-        try:
             today_date_str = time.strftime("%Y-%m-%d")
             
             # Check for date change (midnight rollover)
@@ -511,24 +486,26 @@ class App:
                     with open(self.log_filepath, 'w', encoding='utf-8') as f:
                         f.write(formatted_content)
                 
-                # 2. Update path to today's file (thread-safe assignment)
+                # 2. Update path to today's file
                 self.current_log_date = today_date_str
                 filename = f"api_log_{self.current_log_date}.txt"
                 self.log_filepath = os.path.join(self.log_dir, filename)
                 
-                # 3. Clear the log widget (must be scheduled on main thread)
-                self.master.after(0, self._clear_api_log_widget)
+                # 3. Clear the log widget for the new day
+                self.api_log_text.config(state='normal')
+                self.api_log_text.delete('1.0', 'end')
+                self.api_log_text.config(state='disabled')
                 print(f"Rolled over to new log file: {self.log_filepath}")
                 
             else:
-                # No date change, just overwrite today's file
+                # No date change, just overwrite today's file with current widget content
                 if content.strip():
                     formatted_content = self._format_sql_log(content)
                     with open(self.log_filepath, 'w', encoding='utf-8') as f:
                         f.write(formatted_content)
                         
         except Exception as e:
-            print(f"Error during auto-save worker: {e}")
+            print(f"Error during auto-save: {e}")
 
     def _periodic_log_save(self):
         """Calls the auto-save method and reschedules itself."""
@@ -1330,45 +1307,63 @@ class App:
             self.apk_processing_files.remove(filepath)
             
     # --- NEW: Screen Streaming Methods ---
+    
     def _start_stream(self):
-        """Starts the scrcpy stream and embeds it."""
+        """Starts the scrcpy stream and embeds it (auto-fit height of stream area)."""
         from tkinter import messagebox
+
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
             return
-        
+
         if self.scrcpy_process:
             print("Stream already running.")
             return
-            
+
         if not os.path.exists(self.SCRCPY_PATH):
             print(f"scrcpy not found at: {self.SCRCPY_PATH}")
-            messagebox.showerror("Stream Error", f"scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
+            messagebox.showerror(
+                "Stream Error",
+                "scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder."
+            )
             self.stream_status_label.config(text="Error: scrcpy.exe not found.")
             return
 
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
-        
-        # --- FIX: Set ADB environment variable for scrcpy ---
+
+        # Let Tk calculate frame size
+        self.master.update_idletasks()
+        frame_height = self.stream_embed_frame.winfo_height()
+        if frame_height <= 0:
+            # fallback in case widget not fully laid out yet
+            frame_height = 540
+
+        # Prepare env so scrcpy uses our bundled adb
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
-        # --- END FIX ---
 
-        # --- FIX: Removed hardcoded max-size ---
-        self.scrcpy_process = subprocess.Popen([
-            self.SCRCPY_PATH,
-            "-s", self.connected_device,
-            "--window-title=HHT_STREAM",
-            # "--max-size=540", # <-- This was the bug
-            "--window-x=0", "--window-y=0",
-            "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
-        
+        # Use --max-size equal to the available height
+        self.scrcpy_process = subprocess.Popen(
+            [
+                self.SCRCPY_PATH,
+                "-s",
+                self.connected_device,
+                "--window-title=HHT_STREAM",
+                "--max-size",
+                str(frame_height),
+                "--window-x=0",
+                "--window-y=0",
+                "--window-borderless",
+            ],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            env=env,
+        )
+
         # Start a thread to find and embed the window
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
-    def _embed_stream_window(self):
+def _embed_stream_window(self):
         """Worker thread to find the scrcpy window and embed it."""
         try:
             # Find the window handle (HWND) using the title we set
