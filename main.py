@@ -116,7 +116,7 @@ class App:
         # --- NEW: Screen streaming variables ---
         self.scrcpy_process = None
         self.stream_window_id = None
-        self._source_aspect = None
+        self._source_aspect = None  # width/height of device screen
         self._stream_resize_bind_id = None
         self.current_tab = "device" # Track current tab
         
