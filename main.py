@@ -9,7 +9,7 @@ import zipfile
 import shutil
 import configparser # Using configparser for .ini files
 import datetime # For log date management
-# import ctypes # REMOVED: No longer needed for standalone window
+import ctypes # For screen streaming (embedding window)
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -73,7 +73,7 @@ class ApkFileHandler(FileSystemEventHandler):
 
 class App:
     
-    APP_VERSION = "1.0.1" # Updated version
+    APP_VERSION = "1.0.0" 
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -96,8 +96,8 @@ class App:
         
         # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        self.log_dir = None # Store log directory
-        self.current_log_date = None # Track current log date
+        self.log_dir = None 
+        self.current_log_date = None 
         self.zip_monitor_path = None
         self.apk_monitor_path = None
         self.zip_file_observer = None
@@ -115,14 +115,17 @@ class App:
         
         # --- NEW: Screen streaming variables ---
         self.scrcpy_process = None
-        self.current_tab = "device" # Track current tab
+        self.stream_window_id = None
+        self._source_aspect = None  # width/height of device screen
+        self._stream_resize_bind_id = None
+        self.current_tab = "device"
         
         if getattr(sys, 'frozen', False):
             self.base_path = os.path.dirname(sys.executable)
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
 
-        master.title(f"HHT Android Connect - v{self.APP_VERSION}") 
+        master.title(f"HHT Android Connect - v{self.APP_VERSION}")
 
         # --- Updated window size for vertical layout ---
         app_width = 560 
@@ -145,7 +148,7 @@ class App:
         self.COLOR_3D_BG_ACTIVE = "#3D4450"
         self.COLOR_3D_BG_INACTIVE = "#C8D0DA"
         self.COLOR_WARNING = "#F59E0B"
-        self.COLOR_SIDEBAR_BG = "#3D4450" # Dark sidebar
+        self.COLOR_SIDEBAR_BG = "#3D4450" 
         self.COLOR_SIDEBAR_BTN_INACTIVE = "#3D4450"
         self.COLOR_SIDEBAR_BTN_ACTIVE = "#E0E5EC"
         self.COLOR_SIDEBAR_TEXT_INACTIVE = "#C8D0DA"
@@ -393,7 +396,8 @@ class App:
         # --- Page 5: Stream Screen ---
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
-        # --- NEW: Use Grid to center and expand ---
+        
+        # Use Grid to center and expand
         self.stream_frame.grid_rowconfigure(0, weight=0) # Title
         self.stream_frame.grid_rowconfigure(1, weight=1) # Stream Area (Expand)
         self.stream_frame.grid_rowconfigure(2, weight=0) # Status Label
@@ -402,11 +406,19 @@ class App:
         stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         stream_header.grid(row=0, column=0, pady=(0, 10))
         
-        # Use a BIG button to start stream manually
+        # 1. Frame for Embed (Black box)
+        self.stream_embed_frame = tk.Frame(self.stream_frame, bg="black")
+        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5)
+        
+        # 2. Button Container (Overlay on bottom of stream area or separate row)
+        # Let's put it in the center of the black box if stream not running, or bottom
+        # Better: Button is part of the interface, always visible or toggled.
+        # Let's place it in the center of the black frame initially.
+        
         self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream", style='Raised.TButton', command=self._start_stream)
-        self.stream_start_btn.grid(row=1, column=0) # Centered
+        self.stream_start_btn.grid(row=1, column=0) # Center on top of the black frame
 
-        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to open device screen.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
+        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to begin. Requires a connected device.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.stream_status_label.grid(row=2, column=0, pady=(10, 0))
 
     # --- Log File Methods ---
@@ -416,7 +428,7 @@ class App:
             self.log_dir = os.path.join(self.base_path, "log")
             os.makedirs(self.log_dir, exist_ok=True)
             
-            # --- OPTIMIZATION: Run cleanup in background ---
+            # Run cleanup in background
             threading.Thread(target=self._cleanup_old_logs, daemon=True).start()
 
             # Set path for today
@@ -469,7 +481,6 @@ class App:
             except Exception as e:
                 print(f"Error loading existing log: {e}")
 
-    # --- OPTIMIZATION: This function now only gets text and starts a thread ---
     def _auto_save_log(self):
         """Gets log content from UI and passes it to a worker thread for saving."""
         if not self.log_filepath:
@@ -485,7 +496,6 @@ class App:
         except Exception as e:
             print(f"Error starting auto-save: {e}")
 
-    # --- NEW: Helper to clear widget from main thread ---
     def _clear_api_log_widget(self):
         """Helper to clear the API log widget from the main thread."""
         try:
@@ -495,7 +505,6 @@ class App:
         except Exception as e:
             print(f"Error clearing API log widget: {e}")
 
-    # --- NEW: Worker function for log saving ---
     def _save_log_to_file_worker(self, content):
         """Worker thread to handle the actual file I/O for log saving."""
         try:
@@ -602,7 +611,7 @@ class App:
         elif tab_name == 'stream':
             self.stream_frame.tkraise()
             self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-            # Don't auto start stream, wait for button
+            # Do not auto start stream. Wait for button click.
 
     # --- API Process Methods ---
     def set_api_status(self, status):
@@ -700,7 +709,7 @@ class App:
         self.master.deiconify()
         self.master.lift()
         self.master.focus_force()
-        # No auto-restart stream on window show to prevent confusion, user clicks button
+        # Do NOT restart stream automatically, wait for button
 
     def update_tray_status(self):
         if not self.tray_icon: return
@@ -1327,7 +1336,7 @@ class App:
             
     # --- NEW: Screen Streaming Methods ---
     def _start_stream(self):
-        """Starts the scrcpy stream and embeds it."""
+        """Starts the scrcpy stream in a standalone window."""
         from tkinter import messagebox
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
@@ -1344,29 +1353,39 @@ class App:
             return
 
         print("Starting stream...")
-        self.stream_status_label.config(text="Starting stream, please wait...")
+        self.stream_status_label.config(text="Starting stream (Standalone Window)...")
+        self.stream_start_btn.state(['disabled']) # Disable button while running
+        self.stream_start_btn.config(text="Stop Stream", command=self._stop_stream)
         
         # --- FIX: Set ADB environment variable for scrcpy ---
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
         # --- END FIX ---
 
-        # --- FIX: Removed hardcoded max-size ---
+        # --- FIX: No --max-size, No --window-borderless (Let user resize) ---
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--window-x=0", "--window-y=0",
-            "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) # Pass the modified env
+            # Removed embedding flags
+        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env) 
         
-        # Start a thread to find and embed the window
-        threading.Thread(target=self._embed_stream_window, daemon=True).start()
+        # Start a thread to monitor if the process dies (user closes window)
+        threading.Thread(target=self._monitor_stream_process, daemon=True).start()
 
-    def _embed_stream_window(self):
-        """Worker thread to find the scrcpy window and embed it."""
-        # No embedding in standalone mode
-        pass
+    def _monitor_stream_process(self):
+        """Waits for the scrcpy process to finish and resets UI."""
+        if self.scrcpy_process:
+            self.scrcpy_process.wait()
+            self.scrcpy_process = None
+            
+        # Reset UI on main thread
+        self.master.after(0, self._reset_stream_ui)
+
+    def _reset_stream_ui(self):
+        self.stream_status_label.config(text="Click 'Start Stream' to begin.")
+        self.stream_start_btn.state(['!disabled'])
+        self.stream_start_btn.config(text="Start Stream", command=self._start_stream)
 
     def _stop_stream(self):
         """Stops the scrcpy stream process if it's running."""
@@ -1374,11 +1393,8 @@ class App:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            if self.is_running: # Check if app is still running
-                try:
-                    self.stream_status_label.config(text="Stream stopped.")
-                except tk.TclError:
-                    pass # Window already destroyed
+            
+        self._reset_stream_ui()
 
     # --- Application Exit Method ---
     def on_app_quit(self):
@@ -1445,17 +1461,25 @@ if __name__ == "__main__":
 
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
+    # --- Admin Check ---
+    def is_admin():
+        try: return ctypes.windll.shell32.IsUserAnAdmin()
+        except: return False
+
     # --- Launch Application ---
-    # Removed is_admin() check, PyInstaller handles this with --uac-admin
-    try:
-        root = tk.Tk()
-        app = App(root, lock_file_path=lock_file) 
-        root.protocol('WM_DELETE_WINDOW', app.hide_window)
-        initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
-        icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
-        app.tray_icon = icon
-        threading.Thread(target=icon.run, daemon=True).start()
-        root.mainloop()
-    except Exception as e:
+    if is_admin():
+        try:
+            root = tk.Tk()
+            app = App(root, lock_file_path=lock_file) 
+            root.protocol('WM_DELETE_WINDOW', app.hide_window)
+            initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
+            icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
+            app.tray_icon = icon
+            threading.Thread(target=icon.run, daemon=True).start()
+            root.mainloop()
+        except Exception as e:
+            if os.path.exists(lock_file): os.remove(lock_file)
+            messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
+    else:
         if os.path.exists(lock_file): os.remove(lock_file)
-        messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
