@@ -35,10 +35,9 @@ jobs:
         run: python make_icon.py
 
       # 5. Bundles the application into a single .exe file using PyInstaller
-      #    --add-data="adb;adb"  <-- นี่คือการเพิ่มโฟลเดอร์ adb
-      #    --add-data="scrcpy;scrcpy" <-- นี่คือการเพิ่มโฟลเดอร์ scrcpy
+      #    --uac-admin  <-- นี่คือ Flag ใหม่ที่เพิ่มเข้ามา
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm --clean --onefile --noconsole --icon=icon.ico --additional-hooks-dir=hooks --add-data="adb;adb" --add-data="scrcpy;scrcpy" --name="HHT Android Connect" main.py
+        run: pyinstaller --noconfirm --clean --onefile --noconsole --icon=icon.ico --additional-hooks-dir=hooks --add-data="adb;adb" --add-data="scrcpy;scrcpy" --uac-admin --name="HHT Android Connect" main.py
 
       # 6. Uploads the final .exe file as a downloadable artifact
       #    Updated path to match the new name
