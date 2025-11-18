@@ -116,8 +116,6 @@ class App:
         # --- NEW: Screen streaming variables ---
         self.scrcpy_process = None
         self.stream_window_id = None
-        self._source_aspect = None  # width/height of device screen
-        self._stream_resize_bind_id = None
         self.current_tab = "device" # Track current tab
         
         if getattr(sys, 'frozen', False):
@@ -1311,8 +1309,9 @@ class App:
     # --- NEW: Screen Streaming Methods ---
     
     def _start_stream(self):
-        """Starts the scrcpy stream and embeds it (auto-fit height of embed area)."""
+        """Starts the scrcpy stream and embeds it (auto-fit height of stream area)."""
         from tkinter import messagebox
+
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
             return
@@ -1323,64 +1322,59 @@ class App:
 
         if not os.path.exists(self.SCRCPY_PATH):
             print(f"scrcpy not found at: {self.SCRCPY_PATH}")
-            messagebox.showerror("Stream Error", "scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder.")
+            messagebox.showerror(
+                "Stream Error",
+                "scrcpy.exe not found.\nPlease ensure it is in the 'scrcpy' folder."
+            )
             self.stream_status_label.config(text="Error: scrcpy.exe not found.")
             return
 
         print("Starting stream...")
         self.stream_status_label.config(text="Starting stream, please wait...")
 
-        # Let Tk calculate the latest frame size
+        # Let Tk calculate frame size
         self.master.update_idletasks()
-        frame_h = max(1, self.stream_embed_frame.winfo_height())
+        frame_height = self.stream_embed_frame.winfo_height()
+        if frame_height <= 0:
+            # fallback in case widget not fully laid out yet
+            frame_height = 540
 
-        # Configure environment so scrcpy uses our bundled adb
+        # Prepare env so scrcpy uses our bundled adb
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
 
-        # Let scrcpy scale with max-size ~= height of our embed frame
-        self.scrcpy_process = subprocess.Popen([
-            self.SCRCPY_PATH,
-            "-s", self.connected_device,
-            "--window-title=HHT_STREAM",
-            "--max-size", str(frame_h),
-            "--window-x=0", "--window-y=0",
-            "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
-
-        # Reset source aspect; will be filled when we know device/window size
-        self._source_aspect = None
-
-        # Bind resize of the embed frame so we can keep the stream auto-fitted
-        def _on_frame_resize(event):
-            self._resize_stream_to_fit_height()
-
-        # Unbind any old handler first
-        if self._stream_resize_bind_id is not None:
-            try:
-                self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except Exception:
-                pass
-            self._stream_resize_bind_id = None
-
-        self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", _on_frame_resize)
+        # Use --max-size equal to the available height
+        self.scrcpy_process = subprocess.Popen(
+            [
+                self.SCRCPY_PATH,
+                "-s",
+                self.connected_device,
+                "--window-title=HHT_STREAM",
+                "--max-size",
+                str(frame_height),
+                "--window-x=0",
+                "--window-y=0",
+                "--window-borderless",
+            ],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            env=env,
+        )
 
         # Start a thread to find and embed the window
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
-    
-    def _embed_stream_window(self):
-        """Find scrcpy window and embed it, then size/center to fit height."""
-        import ctypes
+def _embed_stream_window(self):
+        """Worker thread to find the scrcpy window and embed it."""
         try:
+            # Find the window handle (HWND) using the title we set
             hwnd = 0
-            retries = 20  # Try for ~10 seconds
+            retries = 10 # Try for 5 seconds
             while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
                 hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
                 if hwnd == 0:
                     retries -= 1
                     time.sleep(0.5)
-
+            
             if hwnd == 0:
                 print("Could not find HHT_STREAM window. Aborting embed.")
                 if self.is_running:
@@ -1388,116 +1382,56 @@ class App:
                 self._stop_stream()
                 return
 
-            self.stream_window_id = hwnd
-
-            # Try to get real device resolution for aspect ratio
-            src_w, src_h = self._get_device_resolution()
-            if src_w and src_h:
-                self._source_aspect = src_w / src_h
-            else:
-                # Fallback: use current scrcpy window rect
-                rect = ctypes.wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                scrcpy_w = max(1, rect.right - rect.left)
-                scrcpy_h = max(1, rect.bottom - rect.top)
-                self._source_aspect = scrcpy_w / scrcpy_h
-
-            # Re-parent into our Tkinter frame
+            # Get the handle (ID) of our Tkinter frame
             frame_id = self.stream_embed_frame.winfo_id()
+            
+            # --- FIX: Get actual window size and center it ---
+            self.master.update_idletasks() # Ensure frame size is calculated
+            frame_width = self.stream_embed_frame.winfo_width()
+            frame_height = self.stream_embed_frame.winfo_height()
+
+            # Get scrcpy window size
+            rect = ctypes.wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            scrcpy_width = rect.right - rect.left
+            scrcpy_height = rect.bottom - rect.top
+            
+            # Calculate aspect ratio to fit height
+            ratio = frame_height / scrcpy_height
+            new_height = frame_height
+            new_width = int(scrcpy_width * ratio)
+
+            # Calculate offsets to center the window
+            x_offset = (frame_width - new_width) // 2
+            y_offset = (frame_height - new_height) // 2 # Should be 0
+            # --- END FIX ---
+            
+            # Re-parent the scrcpy window into our frame
             ctypes.windll.user32.SetParent(hwnd, frame_id)
-
-            # First sizing
-            self._resize_stream_to_fit_height()
-
+            
+            # Move it to the center of the frame and resize
+            ctypes.windll.user32.MoveWindow(hwnd, x_offset, y_offset, new_width, new_height, True)
+            
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
                 self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
 
         except Exception as e:
             print(f"Error embedding window: {e}")
-            if self.is_running:
+            if self.is_running: # Only update label if app is not closing
                 self.stream_status_label.config(text="Error: Failed to embed stream.")
-
-    
-
-    def _get_device_resolution(self):
-        """
-        Return (width, height) of the connected device using 'adb shell wm size'.
-        Fallback: (0, 0) if parsing fails.
-        """
-        try:
-            device_id = self.connected_device or ""
-            cmd = [self.ADB_PATH]
-            if device_id:
-                cmd += ["-s", device_id]
-            cmd += ["shell", "wm", "size"]
-
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            out = (res.stdout or "") + "\n" + (res.stderr or "")
-            for line in out.splitlines():
-                line = line.strip()
-                if "Physical size:" in line and "x" in line:
-                    part = line.split("Physical size:")[-1].strip()
-                    w_str, h_str = part.split("x", 1)
-                    return int(w_str), int(h_str)
-        except Exception:
-            pass
-        return (0, 0)
-
-    def _resize_stream_to_fit_height(self):
-        """Resize & center scrcpy window so that it always fits the frame HEIGHT."""
-        import ctypes
-        if not self.stream_window_id or not self._source_aspect:
-            return
-
-        self.master.update_idletasks()
-        frame_w = max(1, self.stream_embed_frame.winfo_width())
-        frame_h = max(1, self.stream_embed_frame.winfo_height())
-
-        # Fit by height: new_h = frame_h, new_w = aspect * frame_h
-        new_h = frame_h
-        new_w = int(self._source_aspect * new_h)
-
-        # If width exceeds frame, fallback to fit by width
-        if new_w > frame_w:
-            new_w = frame_w
-            new_h = int(new_w / self._source_aspect)
-
-        x = (frame_w - new_w) // 2
-        y = (frame_h - new_h) // 2
-        if x < 0:
-            x = 0
-        if y < 0:
-            y = 0
-
-        ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, new_w, new_h, True)
 
     def _stop_stream(self):
         """Stops the scrcpy stream process if it's running."""
-        # Unbind resize handler if any
-        if self._stream_resize_bind_id is not None:
-            try:
-                self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except Exception:
-                pass
-            self._stream_resize_bind_id = None
-
         if self.scrcpy_process:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            if self.is_running:  # Check if app is still running
+            if self.is_running: # Check if app is still running
                 try:
                     self.stream_status_label.config(text="Stream stopped.")
                 except tk.TclError:
-                    pass  # Window already destroyed
+                    pass # Window already destroyed
 
     # --- Application Exit Method ---
     def on_app_quit(self):
