@@ -357,6 +357,7 @@ class App:
         zip_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.zip_count_label = tk.Label(zip_header_frame, text="Total Files Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.zip_count_label.pack(side='left')
+        
         self.zip_tree = ttk.Treeview(self.zip_frame, columns=('filename', 'status'), show='headings')
         self.zip_tree.heading('filename', text='FILENAME', anchor='w')
         self.zip_tree.heading('status', text='STATUS', anchor='w')
@@ -377,6 +378,7 @@ class App:
         apk_header_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
         self.apk_count_label = tk.Label(apk_header_frame, text="Total APKs Processed: 0", font=('Segoe UI', 9, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
         self.apk_count_label.pack(side='left')
+
         self.apk_tree = ttk.Treeview(self.apk_frame, columns=('filename', 'status'), show='headings')
         self.apk_tree.heading('filename', text='FILENAME', anchor='w')
         self.apk_tree.heading('status', text='STATUS', anchor='w')
@@ -392,12 +394,10 @@ class App:
         # --- Page 5: Stream Screen ---
         self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
         self.stream_frame.place(relwidth=1, relheight=1)
-        
         # Use Grid to center and expand
-        self.stream_frame.grid_rowconfigure(0, weight=0) # Title
+        self.stream_frame.grid_rowconfigure(0, weight=0) 
         self.stream_frame.grid_rowconfigure(1, weight=1) # Stream Area (Expand)
-        self.stream_frame.grid_rowconfigure(2, weight=0) # Button
-        self.stream_frame.grid_rowconfigure(3, weight=0) # Status
+        self.stream_frame.grid_rowconfigure(2, weight=0) 
         self.stream_frame.grid_columnconfigure(0, weight=1) 
         
         stream_header = tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
@@ -420,11 +420,17 @@ class App:
         try:
             self.log_dir = os.path.join(self.base_path, "log")
             os.makedirs(self.log_dir, exist_ok=True)
+            
+            # Run cleanup in background
             threading.Thread(target=self._cleanup_old_logs, daemon=True).start()
+
             self.current_log_date = time.strftime("%Y-%m-%d")
             filename = f"api_log_{self.current_log_date}.txt"
             self.log_filepath = os.path.join(self.log_dir, filename)
+            print(f"Logging API output to: {self.log_filepath}")
+            
             self._load_log_for_today()
+            
         except Exception as e:
             print(f"Error setting up log file: {e}")
 
@@ -536,11 +542,18 @@ class App:
         return entry_frame
 
     def switch_tab(self, tab_name):
+        print(f"Switching to tab: {tab_name}")
         self.current_tab = tab_name
+        
+        # Stop stream if we navigate away
         if tab_name != "stream":
             self._stop_stream()
+            
+        # Reset all button styles
         for btn in self.all_side_buttons:
             btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
+            
+        # Raise the correct frame and highlight the button
         if tab_name == 'device':
             self.device_frame.tkraise()
             self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
@@ -556,7 +569,8 @@ class App:
         elif tab_name == 'stream':
             self.stream_frame.tkraise()
             self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-            # Do not auto start stream, wait for button click.
+            # Start the stream
+            self._start_stream()
 
     # --- API Process Methods ---
     def set_api_status(self, status):
@@ -654,7 +668,6 @@ class App:
         self.master.deiconify()
         self.master.lift()
         self.master.focus_force()
-        # Do NOT restart stream automatically, wait for button
 
     def update_tray_status(self):
         if not self.tray_icon: return
@@ -1280,7 +1293,7 @@ class App:
             
     # --- NEW: Screen Streaming Methods ---
     def _start_stream(self):
-        """Starts the scrcpy stream and embeds it (auto-fit height of embed area)."""
+        """Starts the scrcpy stream and embeds it."""
         from tkinter import messagebox
         if not self.connected_device:
             self.stream_status_label.config(text="Error: No device connected.")
@@ -1300,44 +1313,51 @@ class App:
         self.stream_status_label.config(text="Starting stream, please wait...")
         self.stream_start_btn.config(state='disabled')
         
-        # --- KEY FIX: Use scrcpy's built-in scaling via --max-size ---
-        # This guarantees the stream aspect ratio is preserved and it fits HEIGHT-wise.
+        # --- FIX: Safety Check for Frame Height ---
+        # This prevents the "size=1" bug when switching tabs quickly
         self.master.update_idletasks()
         target_height = self.stream_embed_frame.winfo_height()
-        if target_height < 100: target_height = 540 # Fallback
+        if target_height < 200: 
+             # If frame isn't drawn yet (tab switch), use a safe default
+             print("Frame height invalid, using fallback 600px")
+             target_height = 600 
 
+        # --- FIX: Set ADB environment variable for scrcpy ---
         env = os.environ.copy()
         env['ADB'] = self.ADB_PATH
+        # --- END FIX ---
 
+        # --- FIX: Use --max-size to match frame height ---
+        # scrcpy will auto-scale width to keep aspect ratio
         self.scrcpy_process = subprocess.Popen([
             self.SCRCPY_PATH,
             "-s", self.connected_device,
             "--window-title=HHT_STREAM",
-            "--max-size", str(target_height), # Force scrcpy to scale down to our frame height
+            "--max-size", str(target_height), # Force correct height
             "--window-x=0", "--window-y=0",
             "--window-borderless"
         ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
-
-        self.stream_window_id = None
         
-        # Bind resize event to handle window resizing
+        # Reset window handle
+        self.stream_window_id = None
+
+        # Bind resize event (to keep centering if user resizes app)
         if self._stream_resize_bind_id is not None:
             try:
                 self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
             except Exception:
                 pass
-            self._stream_resize_bind_id = None
-
         self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", lambda e: self._resize_stream_to_fit())
         
+        # Start embedding thread
         threading.Thread(target=self._embed_stream_window, daemon=True).start()
 
     def _embed_stream_window(self):
-        """Find scrcpy window and embed it, then center it."""
-        import ctypes
+        """Worker thread to find the scrcpy window and embed it."""
         try:
+            # Find the window handle (HWND) using the title we set
             hwnd = 0
-            retries = 20 
+            retries = 20 # Try for 10 seconds
             while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
                 hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
                 if hwnd == 0:
@@ -1352,56 +1372,26 @@ class App:
                 return
 
             self.stream_window_id = hwnd
-
-            # We don't strictly need ADB resolution anymore because scrcpy has scaled it for us.
-            # We just need to get the window's CURRENT size (which is scaled) to center it.
             
+            # Re-parent the scrcpy window into our frame
             frame_id = self.stream_embed_frame.winfo_id()
             ctypes.windll.user32.SetParent(hwnd, frame_id)
-
-            # First sizing
+            
+            # Perform initial centering/sizing
             self._resize_stream_to_fit()
-
+            
             print(f"Successfully embedded stream window {hwnd} into frame {frame_id}")
             if self.is_running:
-                self.stream_status_label.config(text=f"Streaming: {self.connected_device}")
+                self.stream_status_label.config(text=f"Streaming device: {self.connected_device}")
                 self.stream_start_btn.config(state='normal', text="Stop Stream", command=self._stop_stream)
 
         except Exception as e:
             print(f"Error embedding window: {e}")
-            if self.is_running:
+            if self.is_running: 
                 self.stream_status_label.config(text="Error: Failed to embed stream.")
 
-    def _get_device_resolution(self):
-        """Helper to get source aspect ratio (not strictly needed with --max-size but good for fallback logic)."""
-        try:
-            device_id = self.connected_device or ""
-            cmd = [self.ADB_PATH]
-            if device_id:
-                cmd += ["-s", device_id]
-            cmd += ["shell", "wm", "size"]
-
-            res = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            out = (res.stdout or "") + "\n" + (res.stderr or "")
-            for line in out.splitlines():
-                line = line.strip()
-                if "Physical size:" in line and "x" in line:
-                    part = line.split("Physical size:")[-1].strip()
-                    w_str, h_str = part.split("x", 1)
-                    return int(w_str), int(h_str)
-        except Exception:
-            pass
-        return (0, 0)
-
     def _resize_stream_to_fit(self, event=None):
-        """Center the scrcpy window within the frame (scaling is handled by scrcpy --max-size)."""
+        """Center the scrcpy window within the frame."""
         import ctypes
         if not self.stream_window_id:
             return
@@ -1410,27 +1400,27 @@ class App:
         frame_w = self.stream_embed_frame.winfo_width()
         frame_h = self.stream_embed_frame.winfo_height()
         
-        # Get current size of the scrcpy window (which was scaled by --max-size)
+        # Get current size of the scrcpy window (scaled by --max-size)
         rect = ctypes.wintypes.RECT()
         ctypes.windll.user32.GetWindowRect(self.stream_window_id, ctypes.byref(rect))
         scrcpy_w = rect.right - rect.left
         scrcpy_h = rect.bottom - rect.top
 
-        # Calculate Center Offset only
+        # Calculate Center Offset
         x = (frame_w - scrcpy_w) // 2
         y = (frame_h - scrcpy_h) // 2
         if x < 0: x = 0
         if y < 0: y = 0
         
         try:
-            # Move to center, keep current size
+            # Move to center
             ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, scrcpy_w, scrcpy_h, True)
         except Exception as e:
             print(f"Error resizing stream window: {e}")
 
     def _stop_stream(self):
         """Stops the scrcpy stream process if it's running."""
-        # Unbind resize handler if any
+        # Unbind resize handler
         if self._stream_resize_bind_id is not None:
             try:
                 self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
@@ -1442,17 +1432,24 @@ class App:
             print("Stopping stream...")
             self.scrcpy_process.terminate()
             self.scrcpy_process = None
-            if self.is_running:  # Check if app is still running
+            if self.is_running: 
                 try:
                     self.stream_status_label.config(text="Click 'Start Stream' to begin.")
                     self.stream_start_btn.config(state='normal', text="Start Stream", command=self._start_stream)
                 except tk.TclError:
-                    pass  # Window already destroyed
+                    pass 
 
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log()
+        
+        # --- Run log save in background ---
+        try:
+            content = self.api_log_text.get("1.0", "end-1c")
+            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
+        except Exception as e:
+            print(f"Error saving log on quit: {e}")
+        
         self._stop_stream() # Stop stream on quit
         
         if self.zip_file_observer:
