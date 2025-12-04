@@ -1,5 +1,5 @@
 # This code has been verified to have correct indentation.
-# VERSION: B1.00 (Lite - Stable - Fixed Missing Attribute)
+# VERSION: B1.00 (Lite Enhanced - Based on Backup)
 import subprocess
 import threading
 import os
@@ -8,8 +8,8 @@ import time
 import queue
 import zipfile
 import shutil
-import configparser
-import datetime
+import configparser 
+import datetime 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -17,6 +17,7 @@ from pyaxmlparser import APK
 
 # --- Image Generation for UI ---
 def create_android_icon(color):
+    """Generates a simple Android robot icon."""
     from PIL import Image, ImageDraw
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -28,32 +29,42 @@ def create_android_icon(color):
     draw.rectangle((12, 32, 52, 54), fill=color, outline=color, width=1)
     return image
 
-# --- Handlers ---
+# --- Handler for the Zip file monitoring service ---
 class ZipFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
+
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.zip'):
+            # --- FEATURE 2: Filtering by Prefix ---
             filename = os.path.basename(event.src_path)
             if self.app.zip_filename_prefix and not filename.startswith(self.app.zip_filename_prefix):
+                print(f"Skipped: {filename} (Prefix not match)")
                 return
-            if event.src_path in self.app.processing_files: return
+            # --------------------------------------
+
+            if event.src_path in self.app.processing_files:
+                return
+            print(f"New zip file detected: {event.src_path}")
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
+# --- Handler for the APK file monitoring service ---
 class ApkFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
+
     def process_event(self, event):
         if not event.is_directory and event.src_path.endswith('.apk'):
             if event.src_path in self.app.apk_file_map: return
             if event.src_path in self.app.apk_processing_files: return
             self.app.master.after(0, self.app._add_apk_to_monitor, event.src_path)
+    
     def on_created(self, event): self.process_event(event)
     def on_modified(self, event): self.process_event(event)
 
 class App:
     
-    APP_VERSION = "B1.00" # Lite Version
+    APP_VERSION = "1.0.0 Lite"
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -70,18 +81,20 @@ class App:
         self.api_status = "Offline"
         self.lock_file_path = lock_file_path
         self.known_devices = set()
+
         self.notification_window = None
         self.notification_timer = None
         
+        # Variables
         self.log_filepath = None
-        self.log_dir = None
-        self.current_log_date = None
+        self.log_dir = None 
+        self.current_log_date = None 
         
         # Configs
         self.zip_monitor_path = None
-        self.zip_filename_prefix = ""
+        self.zip_filename_prefix = "" # New Config Variable
         self.apk_monitor_path = None
-
+        
         self.zip_file_observer = None
         self.apk_file_observer = None
         
@@ -102,8 +115,8 @@ class App:
 
         master.title(f"HHT Android Connect - v{self.APP_VERSION}")
 
-        app_width = 560 
-        app_height = 640 
+        app_width = 560
+        app_height = 640
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -144,12 +157,10 @@ class App:
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
         self.ADB_PATH = self.get_adb_path()
-        
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
             master.quit()
             return
-            
         self.start_adb_server()
         self.connected_device = None
 
@@ -167,56 +178,7 @@ class App:
         
         self.switch_tab('device')
 
-    # --- FIX: Moved search_api_logs here to ensure it's in the class ---
-    def search_api_logs(self):
-        import tkinter as tk
-        search_term = self.search_entry.winfo_children()[0].get()
-        self.api_log_text.config(state='normal')
-        if search_term != self.last_search_term:
-            self.last_search_term = search_term
-            self.last_search_pos = "1.0"
-            self.api_log_text.tag_remove('search', '1.0', tk.END)
-            self.api_log_text.tag_remove('current_search', '1.0', tk.END)
-        if search_term:
-            start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
-            if not start_pos:
-                self.last_search_pos = "1.0"
-                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
-                start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
-            if start_pos:
-                end_pos = f"{start_pos}+{len(search_term)}c"
-                self.api_log_text.tag_add('search', start_pos, end_pos)
-                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
-                self.api_log_text.tag_add('current_search', start_pos, end_pos)
-                self.api_log_text.see(start_pos)
-                self.last_search_pos = end_pos
-        self.api_log_text.config(state='disabled')
-    # ----------------------------------------------------------------
-
-    def show_notification(self, message, is_connected):
-        import tkinter as tk
-        if self.notification_timer: self.master.after_cancel(self.notification_timer)
-        color = self.COLOR_SUCCESS if is_connected else self.COLOR_DANGER
-        if self.notification_window and self.notification_window.winfo_exists():
-            self.notification_window.winfo_children()[0].config(text=message, bg=color)
-            self.notification_window.config(bg=color)
-        else:
-            self.notification_window = tk.Toplevel(self.master)
-            self.notification_window.overrideredirect(True)
-            self.notification_window.attributes("-topmost", True)
-            self.notification_window.config(bg=color)
-            tk.Label(self.notification_window, text=message, fg="white", bg=color, font=('Segoe UI', 10), justify='left', padx=20, pady=10).pack()
-            self.notification_window.update_idletasks()
-            x = self.master.winfo_screenwidth() - self.notification_window.winfo_width() - 20
-            y = self.master.winfo_screenheight() - self.notification_window.winfo_height() - 60
-            self.notification_window.geometry(f'+{x}+{y}')
-        self.notification_timer = self.master.after(3000, self.hide_notification)
-
-    def hide_notification(self):
-        if self.notification_window and self.notification_window.winfo_exists():
-            self.notification_window.destroy()
-        self.notification_window = None; self.notification_timer = None
-
+    # ... UI Helper Methods ...
     def create_side_button(self, parent, text, command):
         import tkinter as tk
         return tk.Button(parent, text=text, command=command, font=('Segoe UI', 10, 'bold'), bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE, activebackground=self.COLOR_SIDEBAR_BTN_ACTIVE, activeforeground=self.COLOR_SIDEBAR_TEXT_ACTIVE, relief='flat', bd=0, anchor='w', padx=15, pady=15)
@@ -356,6 +318,30 @@ class App:
             self.api_status_label.config(text="API Status: Offline", fg=self.COLOR_DANGER)
         self.update_tray_status()
 
+    def search_api_logs(self):
+        import tkinter as tk
+        search_term = self.search_entry.winfo_children()[0].get()
+        self.api_log_text.config(state='normal')
+        if search_term != self.last_search_term:
+            self.last_search_term = search_term
+            self.last_search_pos = "1.0"
+            self.api_log_text.tag_remove('search', '1.0', tk.END)
+            self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+        if search_term:
+            start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+            if not start_pos:
+                self.last_search_pos = "1.0"
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+                start_pos = self.api_log_text.search(search_term, self.last_search_pos, stopindex=tk.END, nocase=True)
+            if start_pos:
+                end_pos = f"{start_pos}+{len(search_term)}c"
+                self.api_log_text.tag_add('search', start_pos, end_pos)
+                self.api_log_text.tag_remove('current_search', '1.0', tk.END)
+                self.api_log_text.tag_add('current_search', start_pos, end_pos)
+                self.api_log_text.see(start_pos)
+                self.last_search_pos = end_pos
+        self.api_log_text.config(state='disabled')
+
     def start_api_exe(self):
         self.api_log_queue = queue.Queue()
         api_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "api.exe")
@@ -408,7 +394,6 @@ class App:
         if "fiber" in message.lower() and self.api_status != "Online":
             self.set_api_status("Online")
 
-    # --- Window and Tray Methods ---
     def hide_window(self):
         self.master.withdraw()
 
@@ -439,31 +424,26 @@ class App:
             pystray.MenuItem('Quit', self.on_app_quit)
         )
 
-    # --- Device Monitoring and Connection Methods ---
+    # --- Device Monitoring ---
     def device_monitor_loop(self):
         while self.is_running:
             try:
                 result = subprocess.run([self.ADB_PATH, "devices"], 
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                         text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                
                 current_devices = set(self.parse_device_list(result.stdout))
-
                 if self.connected_device and self.connected_device not in current_devices:
                     if not self.is_disconnecting:
                         self.is_disconnecting = True
                         self.master.after(0, self.handle_auto_disconnect)
-                
                 if not self.connected_device:
                     newly_connected = current_devices - self.known_devices
                     if newly_connected:
                         device_to_connect = newly_connected.pop()
                         threading.Thread(target=self._connect_device, args=(device_to_connect,), daemon=True).start()
-                
                 self.known_devices = current_devices
             except Exception as e:
                 print(f"Error in device monitor loop: {e}")
-            
             time.sleep(3)
 
     def handle_auto_disconnect(self):
@@ -481,7 +461,6 @@ class App:
         import tkinter as tk
         for item in self.device_tree.get_children():
             self.device_tree.delete(item)
-        
         if all_known_devices:
             for device_id in sorted(list(all_known_devices)):
                 status = "Connected" if device_id == self.connected_device else "Available"
@@ -499,7 +478,6 @@ class App:
             all_known_devices = set(devices)
             if self.connected_device:
                 all_known_devices.add(self.connected_device)
-            
             self.master.after(0, self._update_device_tree, all_known_devices)
         except Exception as e:
             self.master.after(0, lambda: messagebox.showerror("Error", f"An error occurred while refreshing devices:\n{e}"))
@@ -511,7 +489,6 @@ class App:
         try:
             result = subprocess.run([self.ADB_PATH, "-s", device_id, "reverse", "tcp:8000", "tcp:8000"],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            
             if self.connected_device is None and result.returncode == 0:
                 self.connected_device = device_id
                 self.is_disconnecting = False
@@ -519,10 +496,8 @@ class App:
                 self.master.after(0, self.disconnect_button.config, {'state': 'normal'})
                 self.master.after(0, self.refresh_devices)
                 self.master.after(0, self.update_tray_status)
-                
                 self.master.after(0, self._clear_apk_monitor)
-                self.master.after(100, self._scan_existing_apk_files) # Added small delay
-                
+                self.master.after(100, self._scan_existing_apk_files) 
             elif result.returncode != 0:
                 self.master.after(0, lambda: messagebox.showerror("Error", f"Failed to connect:\n{result.stderr}"))
         except Exception as e:
@@ -551,32 +526,23 @@ class App:
         finally:
             self.disconnect_button.config(state='normal')
 
-    # --- ADB Helper Methods ---
+    # --- ADB Helper ---
     def get_adb_path(self):
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False): base_path = sys._MEIPASS
+        else: base_path = os.path.dirname(os.path.abspath(__file__))
         adb_path = os.path.join(base_path, "adb", "adb.exe")
         return adb_path if os.path.exists(adb_path) else "adb"
 
     def check_adb(self):
-        from tkinter import messagebox
         try:
             subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             return True
-        except FileNotFoundError:
-            messagebox.showerror("ADB Error", f"ADB executable not found at the expected path: {self.ADB_PATH}")
-            return False
-        except Exception:
-            return False
+        except: return False
 
     def start_adb_server(self):
-        from tkinter import messagebox
         try:
             subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not start ADB server:\n{e}")
             self.master.quit()
 
     def refresh_devices(self):
@@ -601,17 +567,14 @@ class App:
             return
         device_details = self.device_tree.item(selected_item)
         selected_device = device_details['values'][0]
-
         if self.connected_device == selected_device:
             messagebox.showinfo("Already Connected", f"Device {selected_device} is already connected.")
             return
-        
         if self.connected_device is not None:
             messagebox.showwarning("Device Already Connected", 
                                   f"Device {self.connected_device} is already connected.\n\n"
                                   f"Please click 'Disconnect' first before connecting a new device.")
             return
-        
         threading.Thread(target=self._connect_device, args=(selected_device,), daemon=True).start()
 
     def disconnect_device(self):
@@ -621,47 +584,21 @@ class App:
             return
         threading.Thread(target=self._disconnect_device, daemon=True).start()
 
-    # --- Config & Monitoring Service Methods ---
+    # --- Config & Monitoring ---
     def _load_configs(self):
-        from tkinter import messagebox
         config_path = os.path.join(self.base_path, "configs", "config.ini")
         config = configparser.ConfigParser()
-        
         if not os.path.exists(config_path):
-            print(f"Error: Config file not found at {config_path}")
-            messagebox.showerror("Config Error", f"Configuration file not found. Please create it at:\n{config_path}")
+            messagebox.showerror("Config Error", f"Configuration file not found.\n{config_path}")
             return False
-            
         try:
             config.read(config_path)
-            
-            try:
-                self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
-                if not os.path.exists(self.zip_monitor_path):
-                    messagebox.showwarning("Config Warning", f"The Zip monitor path does not exist:\n{self.zip_monitor_path}\n\nThe Zip service will not start.")
-                else:
-                    print(f"Monitoring Zip Outbox path: {self.zip_monitor_path}")
-            except KeyError:
-                messagebox.showerror("Config Error", "DEFAULT_PRICE_TAG_PATH not found in [SETTING] section of config.ini")
-                
-            try:
-                self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
-                if not os.path.exists(self.apk_monitor_path):
-                    messagebox.showwarning("Config Warning", f"The APK monitor path does not exist:\n{self.apk_monitor_path}\n\nThe APK service will not start.")
-                else:
-                    print(f"Monitoring APK path: {self.apk_monitor_path}")
-            except KeyError:
-                messagebox.showerror("Config Error", "MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
-            
-            # --- FIX: Read Prefix ---
-            try:
-                self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
-                print(f"Zip Filter Prefix: {self.zip_filename_prefix}")
-            except KeyError:
-                self.zip_filename_prefix = "" # No filter
-                
+            self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
+            self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
+            # --- FEATURE 2: Prefix Check (Config) ---
+            try: self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
+            except KeyError: self.zip_filename_prefix = ""
             return True
-            
         except Exception as e:
             messagebox.showerror("Config Error", f"Error loading config.ini file: {e}")
             return False
@@ -674,7 +611,6 @@ class App:
                 self.zip_file_observer.schedule(zip_event_handler, self.zip_monitor_path, recursive=False)
                 self.zip_file_observer.start()
                 print("Zip monitoring service started.")
-            
             if self.apk_monitor_path and os.path.exists(self.apk_monitor_path):
                 apk_event_handler = ApkFileHandler(self)
                 self.apk_file_observer = Observer()
@@ -683,45 +619,22 @@ class App:
                 print("APK monitoring service started.")
 
     def _scan_existing_apk_files(self):
-        if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path):
-            return 
-
-        print(f"Scanning for existing APKs in: {self.apk_monitor_path}")
+        if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path): return 
         try:
             for filename in os.listdir(self.apk_monitor_path):
                 if filename.endswith(".apk"):
                     filepath = os.path.join(self.apk_monitor_path, filename)
                     if filepath not in self.apk_file_map and filepath not in self.apk_processing_files:
-                        print(f"Found existing APK: {filepath}")
                         self._add_apk_to_monitor(filepath)
         except Exception as e:
             print(f"Error scanning existing APKs: {e}")
 
-    # --- Zip Service Methods ---
-    def _clear_zip_monitor(self):
-        print("Clearing Zip Monitor...")
-        try:
-            for item in self.zip_tree.get_children():
-                self.zip_tree.delete(item)
-        except Exception as e:
-            print(f"Error clearing Zip tree: {e}")
-        
-        self.zip_processed_count = 0
-        self.zip_file_map.clear()
-        self.processing_files.clear()
-        
-        try:
-            self.zip_count_label.config(text="Total Files Processed: 0")
-        except Exception as e:
-            print(f"Error resetting Zip count label: {e}")
-
+    # --- Zip Methods ---
     def _add_zip_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
-        
         if filepath in self.processing_files: return
         self.processing_files.add(filepath)
-        
         item_id = self.zip_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
         self.zip_file_map[filepath] = item_id
         threading.Thread(target=self.process_zip_file, args=(filepath,), daemon=True).start()
@@ -736,318 +649,162 @@ class App:
                 self.zip_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
                 self.zip_processed_count += 1
                 self.zip_count_label.config(text=f"Total Files Processed: {self.zip_processed_count}")
-            elif status == "Error":
-                self.zip_tree.item(item_id, values=(filename, 'Error'), tags=('error',))
+            elif "Error" in status:
+                self.zip_tree.item(item_id, values=(filename, status), tags=('error',))
         except Exception as e:
-            print(f"Error updating zip status in UI: {e}")
+            print(f"Error updating zip status: {e}")
 
     def _remove_from_processing_list(self, filepath):
-        if filepath in self.processing_files:
-            self.processing_files.remove(filepath)
+        if filepath in self.processing_files: self.processing_files.remove(filepath)
 
     def process_zip_file(self, zip_path):
         item_id = self.zip_file_map.get(zip_path)
-        if not item_id:
-            print(f"Error: Could not find item_id for {zip_path}")
-            return
-
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        for _ in range(10): 
-            try: 
+        # --- FEATURE 1: Robust Retry (10s) ---
+        for _ in range(10):
+            try:
                 with open(zip_path, 'rb'): pass
                 break
             except: time.sleep(1)
         else:
-            self.master.after(0, self._update_zip_status, item_id, "Error: File Locked")
+            self.master.after(0, self._update_zip_status, item_id, "Error: Locked")
             self.master.after(0, self._remove_from_processing_list, zip_path)
             return
+        # -------------------------------------
 
         temp_extract_dir = os.path.join(self.base_path, "tmp", f"extract_{os.path.basename(zip_path)}")
         original_filename_with_ext = os.path.basename(zip_path)
         original_dir = os.path.dirname(zip_path)
         
         try:
-            # --- RENAMING LOGIC ---
             filename_no_ext = original_filename_with_ext.replace('.zip', '')
             filename_parts = filename_no_ext.split('-')
             new_zip_path = zip_path
             
-            if len(filename_parts) == 5: 
-                part_prefix = filename_parts[0] 
-                part_branch = filename_parts[1] 
-                part_zero = filename_parts[2]  
-                part_date = filename_parts[3]   
-                part_time = filename_parts[4]    
-                part_export_date = time.strftime("%y%m%d") 
-                new_filename = f"{part_prefix}-{part_branch}-{part_zero}-{part_date}-{part_export_date}-{part_time}.zip"
-                new_zip_path = os.path.join(original_dir, new_filename)
-                print(f"Original name: {original_filename_with_ext}, New name: {new_filename}")
-            
-            elif len(filename_parts) == 6: 
-                print(f"Filename {original_filename_with_ext} is already in the correct format.")
-                new_zip_path = zip_path
-            
-            else:
-                print(f"Warning: Unknown filename format '{original_filename_with_ext}'. Re-zipping with original name.")
-                new_zip_path = zip_path
-            # --- END RENAMING LOGIC ---
+            if len(filename_parts) == 5:
+                new_name = f"{filename_parts[0]}-{filename_parts[1]}-{filename_parts[2]}-{filename_parts[3]}-{time.strftime('%y%m%d')}-{filename_parts[4]}.zip"
+                new_zip_path = os.path.join(original_dir, new_name)
 
-            # 1. Unzip
             os.makedirs(temp_extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_extract_dir)
-            print(f"Unzipped '{original_filename_with_ext}'")
-
-            # 2. Delete original
             os.remove(zip_path)
-            print(f"Removed original: {zip_path}")
 
-            # 3. Re-zip
             with zipfile.ZipFile(new_zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
                 for root, dirs, files in os.walk(temp_extract_dir):
                     for d in dirs:
                         dir_path = os.path.join(root, d)
-                        arcname = os.path.relpath(dir_path, temp_extract_dir)
-                        arcname = arcname.replace(os.path.sep, '/') + '/'
-                        
-                        zinfo = zipfile.ZipInfo(arcname)
-                        zinfo.create_system = 3
-                        zinfo.external_attr = (0o755 << 16) | 0x10
-                        zinfo.compress_type = zipfile.ZIP_DEFLATED
+                        arcname = os.path.relpath(dir_path, temp_extract_dir).replace(os.sep, '/') + '/'
+                        zinfo = zipfile.ZipInfo(arcname); zinfo.create_system = 3; zinfo.external_attr = (0o755 << 16) | 0x10
                         zip_ref.writestr(zinfo, "")
-                        
                     for file in files:
                         file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, temp_extract_dir) 
-                        arcname = arcname.replace(os.path.sep, '/') 
-                        
-                        zinfo = zipfile.ZipInfo.from_file(file_path, arcname)
-                        zinfo.create_system = 3 
-                        zinfo.external_attr = (0o644 << 16) 
-                        
-                        with open(file_path, "rb") as source:
-                            zip_ref.writestr(zinfo, source.read()) 
+                        arcname = os.path.relpath(file_path, temp_extract_dir).replace(os.sep, '/')
+                        zinfo = zipfile.ZipInfo.from_file(file_path, arcname); zinfo.create_system = 3; zinfo.external_attr = (0o644 << 16)
+                        with open(file_path, "rb") as source: zip_ref.writestr(zinfo, source.read())
             
-            self.master.after(0, self._update_zip_status, iid, "Done")
-
+            self.master.after(0, self._update_zip_status, item_id, "Done")
         except Exception as e:
-            print(f"Error processing zip file {zip_path}: {e}")
-            self.master.after(0, self._update_zip_status, iid, "Error")
-        
+            self.master.after(0, self._update_zip_status, item_id, "Error")
         finally:
-            if os.path.exists(temp_extract_dir):
-                shutil.rmtree(temp_extract_dir)
-            self.master.after(0, self._remove_from_processing_list, zip_path) 
-            
-    # --- APK Installer Methods ---
+            if os.path.exists(temp_extract_dir): shutil.rmtree(temp_extract_dir)
+            self.master.after(0, self._remove_from_processing_list, zip_path)
+
+    # --- APK Methods ---
     def _clear_apk_monitor(self):
-        print("Clearing APK Monitor...")
         try:
-            for item in self.apk_tree.get_children():
-                self.apk_tree.delete(item)
-        except Exception as e:
-            print(f"Error clearing APK tree (window might be closing): {e}")
-        
-        self.apk_processed_count = 0
-        self.apk_file_map.clear()
-        self.apk_processing_files.clear()
-        
-        try:
-            self.apk_count_label.config(text="Total APKs Processed: 0")
-        except Exception as e:
-            print(f"Error resetting APK count label (window might be closing): {e}")
+            for item in self.apk_tree.get_children(): self.apk_tree.delete(item)
+        except: pass
+        self.apk_processed_count = 0; self.apk_file_map.clear(); self.apk_processing_files.clear()
+        try: self.apk_count_label.config(text="Total APKs Processed: 0")
+        except: pass
 
     def _add_apk_to_monitor(self, filepath):
         import tkinter as tk
         filename = os.path.basename(filepath)
-        
-        if filepath in self.apk_file_map:
-             print(f"APK {filename} is already in the processing queue or done.")
-             return
-        
+        if filepath in self.apk_file_map: return
         self.apk_processing_files.add(filepath)
-        
         item_id = self.apk_tree.insert('', tk.END, values=(filename, 'Pending'), tags=('pending',))
-        self.apk_file_map[filepath] = item_id # Add to *session* lock
+        self.apk_file_map[filepath] = item_id
         threading.Thread(target=self._run_apk_install, args=(filepath, item_id), daemon=True).start()
-        
-    def _get_device_version(self, pkg_name):
-        if not self.connected_device:
-            return 0
-            
-        try:
-            device_id = self.connected_device
-            command = [self.ADB_PATH, "-s", device_id, "shell", "dumpsys", "package", pkg_name]
-            
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-            
-            if result.stdout:
-                for line in result.stdout.splitlines():
-                    if "versionCode=" in line:
-                        version_str = line.strip().split('versionCode=')[1]
-                        version_code = int(version_str.split(' ')[0])
-                        print(f"Found device version {version_code} for {pkg_name}")
-                        return version_code
-            
-            print(f"Package {pkg_name} not found on device.")
-            return 0 # Package not found
-        except Exception as e:
-            print(f"Error getting device version: {e}")
-            return 0
 
     def _run_apk_install(self, apk_path, item_id):
         self.master.after(0, self._update_apk_status, item_id, "Checking...")
-        
         for _ in range(5):
-            try:
-                with open(apk_path, 'rb') as f: pass
+            try: 
+                with open(apk_path, 'rb'): pass
                 break
-            except PermissionError:
-                time.sleep(1)
-            except FileNotFoundError:
-                print(f"APK {apk_path} disappeared, aborting.")
-                self.master.after(0, self._update_apk_status, item_id, "Error: File disappeared")
-                self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-                return
+            except: time.sleep(1)
         else:
-            print(f"Failed to access file {apk_path} after 5 seconds, skipping.")
-            self.master.after(0, self._update_apk_status, item_id, "Error: File locked")
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            return
+            self.master.after(0, self._update_apk_status, item_id, "Error: File locked"); return
 
-        try:
-            apk = APK(apk_path)
-            pkg_name = apk.package
-            pc_version = int(apk.version_code)
-            print(f"PC APK '{os.path.basename(apk_path)}' is {pkg_name} v{pc_version}")
-        except Exception as e:
-            print(f"Error parsing APK: {e}")
-            self.master.after(0, self._update_apk_status, item_id, "Error: Invalid APK")
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            return
-            
-        wait_time = 0
-        while not self.connected_device and self.is_running and wait_time < 10:
-            print(f"APK Install: Waiting for device... ({wait_time}s)")
-            self.master.after(0, self._update_apk_status, item_id, "Waiting for device...")
-            time.sleep(1)
-            wait_time += 1
-
-        if not self.connected_device:
-            print("APK Install: Timed out waiting for device.")
-            self.master.after(0, self._update_apk_status, item_id, "Error: No device")
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            return
-            
-        device_version = self._get_device_version(pkg_name)
+        try: apk = APK(apk_path); pkg = apk.package; ver = int(apk.version_code)
+        except: self.master.after(0, self._update_apk_status, item_id, "Error: Invalid APK"); return
         
+        wait = 0
+        while not self.connected_device and self.is_running and wait < 10:
+            self.master.after(0, self._update_apk_status, item_id, "Waiting for device..."); time.sleep(1); wait+=1
+        
+        if not self.connected_device:
+            self.master.after(0, self._update_apk_status, item_id, "Error: No device"); return
+
+        # Check Device Version
+        dev_ver = 0
         try:
-            install_needed = False
-            install_reason = ""
-            status_tag = ""
-            
-            if device_version == 0:
-                install_needed = True
-                install_reason = f"Installing (v{pc_version})..."
-            elif pc_version > device_version:
-                install_needed = True
-                install_reason = f"Upgrading (v{device_version} -> v{pc_version})..."
-            elif pc_version == device_version:
-                status_tag = f"Skipped (v{pc_version} installed)"
-            else: # pc_version < device_version
-                status_tag = f"Skipped (Newer v{device_version})"
-                
-            if install_needed:
-                self.master.after(0, self._update_apk_status, item_id, install_reason)
-                device_id = self.connected_device
-                command = [self.ADB_PATH, "-s", device_id, "install", "-r", apk_path]
-                
-                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=subprocess.CREATE_NO_WINDOW)
-                
-                if "Success" in result.stdout:
-                    self.master.after(0, self._update_apk_status, item_id, "Success")
-                else:
-                    error_message = (result.stdout or result.stderr).strip().split('\n')[-1]
-                    if not error_message: error_message = "Unknown error"
-                    self.master.after(0, self._update_apk_status, item_id, f"Error: {error_message}")
-            elif status_tag:
-                 self.master.after(0, self._update_apk_status, item_id, status_tag)
-            
-        except Exception as e:
-            self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
-        finally:
-            self.master.after(0, self._remove_from_apk_processing_list, apk_path)
-            
-    def _update_apk_status(self, item_id, status_message):
+            res = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "shell", "dumpsys", "package", pkg], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            for l in res.stdout.splitlines():
+                if "versionCode=" in l: dev_ver = int(l.strip().split("versionCode=")[1].split(" ")[0]); break
+        except: pass
+
+        if dev_ver == 0: msg = "Installing..."
+        elif ver > dev_ver: msg = "Upgrading..."
+        else: self.master.after(0, self._update_apk_status, item_id, f"Skipped (v{dev_ver} installed)"); return
+
+        self.master.after(0, self._update_apk_status, item_id, msg)
         try:
-            if not self.apk_tree.exists(item_id):
-                return
-                
-            filename = self.apk_tree.item(item_id, 'values')[0]
-            
-            if "Processing" in status_message or "Installing" in status_message or "Upgrading" in status_message or "Waiting" in status_message:
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('processing',))
-            elif "Success" in status_message:
-                self.apk_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
-                self.apk_processed_count += 1
-                self.apk_count_label.config(text=f"Total APKs Processed: {self.apk_processed_count}")
-            elif "Skipped" in status_message:
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('skipped',))
-            else: # Any other message is an error
-                self.apk_tree.item(item_id, values=(filename, status_message), tags=('error',))
-        except Exception as e:
-            print(f"Error updating APK status in UI (item may be gone): {e}")
-            
+            res = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "install", "-r", apk_path], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if "Success" in res.stdout: self.master.after(0, self._update_apk_status, item_id, "Success")
+            else: self.master.after(0, self._update_apk_status, item_id, "Error: Install Failed")
+        except Exception as e: self.master.after(0, self._update_apk_status, item_id, f"Error: {e}")
+        finally: self.master.after(0, self._remove_from_apk_processing_list, apk_path)
+
+    def _update_apk_status(self, item_id, msg):
+        try:
+            if not self.apk_tree.exists(item_id): return
+            fn = self.apk_tree.item(item_id, 'values')[0]
+            tag = 'error'
+            if 'Success' in msg: tag='done'
+            elif 'Skipped' in msg: tag='skipped'
+            elif 'Installing' in msg or 'Upgrading' in msg or 'Waiting' in msg: tag='processing'
+            self.apk_tree.item(item_id, values=(fn, msg), tags=(tag,))
+        except: pass
+
     def _remove_from_apk_processing_list(self, filepath):
-        """Removes an APK from the processing set once done/failed."""
-        if filepath in self.apk_processing_files:
-            self.apk_processing_files.remove(filepath)
-            
-    # --- Application Exit Method ---
+        if filepath in self.apk_processing_files: self.apk_processing_files.remove(filepath)
+
+    # --- Exit ---
     def on_app_quit(self):
         self.is_running = False
-        
         try:
-            content = self.api_log_text.get("1.0", "end-1c")
-            threading.Thread(target=self._save_log_to_file_worker, args=(content,), daemon=True).start()
-        except Exception as e:
-            print(f"Error saving log on quit: {e}")
+            c = self.api_log_text.get("1.0", "end-1c")
+            threading.Thread(target=self._save_log_to_file_worker, args=(c,), daemon=True).start()
+        except: pass
         
-        if self.zip_file_observer:
-            self.zip_file_observer.stop()
-            self.zip_file_observer.join()
-            print("Zip monitoring service stopped.")
-
-        if self.apk_file_observer:
-            self.apk_file_observer.stop()
-            self.apk_file_observer.join()
-            print("APK monitoring service stopped.")
-
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
-        
         if self.connected_device:
-            try:
-                subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            except Exception as e: print(f"Could not disconnect on exit: {e}")
+            subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
         
-        try:
-            print("Shutting down ADB server...")
-            subprocess.run([self.ADB_PATH, "kill-server"],
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        except Exception as e:
-            print(f"Error killing ADB server: {e}")
+        # Kill ADB
+        try: subprocess.run([self.ADB_PATH, "kill-server"], creationflags=subprocess.CREATE_NO_WINDOW)
+        except: pass
         
-        try:
-            if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
-        except Exception as e: print(f"Could not remove lock file: {e}")
-
+        if os.path.exists(self.lock_file_path):
+            try: os.remove(self.lock_file_path)
+            except: pass
         self.master.destroy()
 
-# --- Main Execution Block ---
 if __name__ == "__main__":
     import tkinter as tk
     from tkinter import messagebox
@@ -1056,10 +813,6 @@ if __name__ == "__main__":
     import ctypes
     import psutil
 
-    # DPI Awareness - Essential for correct window embedding size
-    try: ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except: pass
-
     temp_dir = os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Temp')
     lock_file = os.path.join(temp_dir, 'hht_android_connect.lock')
 
@@ -1067,21 +820,18 @@ if __name__ == "__main__":
         try:
             with open(lock_file, 'r') as f: pid = int(f.read().strip())
             if psutil.pid_exists(pid):
-                messagebox.showinfo("Already Running", "HHT Android Connect is already running in the system tray.")
+                messagebox.showinfo("Already Running", "App is already running.")
                 sys.exit()
-            else: print("Stale lock file found. The application will start.")
-        except (IOError, ValueError): print("Corrupt lock file found. The application will start.")
+        except: pass
 
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
-    # --- Launch Application ---
-    # Removed is_admin() check, PyInstaller handles this with --uac-admin
     try:
         root = tk.Tk()
         app = App(root, lock_file_path=lock_file) 
         root.protocol('WM_DELETE_WINDOW', app.hide_window)
-        initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
-        icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
+        menu = pystray.Menu(pystray.MenuItem('Show', app.show_window, default=True), pystray.MenuItem('Quit', app.on_app_quit))
+        icon = pystray.Icon("HHT", app.icon_image, "HHT Connect", menu)
         app.tray_icon = icon
         threading.Thread(target=icon.run, daemon=True).start()
         root.mainloop()
