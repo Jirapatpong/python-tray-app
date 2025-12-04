@@ -1,4 +1,5 @@
 # This code has been verified to have correct indentation.
+# VERSION: B1.00 (Lite - No Streaming)
 import subprocess
 import threading
 import os
@@ -7,9 +8,9 @@ import time
 import queue
 import zipfile
 import shutil
-import configparser 
-import datetime 
-import ctypes 
+import configparser
+import datetime
+# import ctypes # REMOVED: No longer needed
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -32,24 +33,19 @@ def create_android_icon(color):
 class ZipFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
-
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.zip'):
-            # --- FIX: Check Prefix Filter Here ---
+            # Check Prefix
             filename = os.path.basename(event.src_path)
             if self.app.zip_filename_prefix and not filename.startswith(self.app.zip_filename_prefix):
-                print(f"Ignored file (prefix mismatch): {filename}")
                 return
-            # -------------------------------------
 
             if event.src_path in self.app.processing_files: return
-            print(f"New zip file detected: {event.src_path}")
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
 class ApkFileHandler(FileSystemEventHandler):
     def __init__(self, app_instance):
         self.app = app_instance
-
     def process_event(self, event):
         if not event.is_directory and event.src_path.endswith('.apk'):
             if event.src_path in self.app.apk_file_map: return
@@ -60,7 +56,7 @@ class ApkFileHandler(FileSystemEventHandler):
 
 class App:
     
-    APP_VERSION = "1.0.1" # Updated version
+    APP_VERSION = "B1.00" # Lite Version
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -84,11 +80,11 @@ class App:
         self.log_dir = None
         self.current_log_date = None
         
-        # Config variables
+        # Configs
         self.zip_monitor_path = None
-        self.zip_filename_prefix = "" # New variable for prefix
+        self.zip_filename_prefix = ""
         self.apk_monitor_path = None
-        
+
         self.zip_file_observer = None
         self.apk_file_observer = None
         
@@ -100,10 +96,6 @@ class App:
         self.apk_file_map = {}
         self.apk_processing_files = set()
         
-        self.scrcpy_process = None
-        self.stream_window_id = None
-        self._source_aspect = None
-        self._stream_resize_bind_id = None
         self.current_tab = "device"
         
         if getattr(sys, 'frozen', False):
@@ -155,7 +147,6 @@ class App:
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
         self.ADB_PATH = self.get_adb_path()
-        self.SCRCPY_PATH = self.get_scrcpy_path()
         
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -179,7 +170,7 @@ class App:
         
         self.switch_tab('device')
 
-    # ... (UI Methods remain mostly the same) ...
+    # ... (Notifications & Helper Methods) ...
     def show_notification(self, message, is_connected):
         import tkinter as tk
         if self.notification_timer: self.master.after_cancel(self.notification_timer)
@@ -239,9 +230,10 @@ class App:
         self.side_btn_zip.pack(fill='x')
         self.side_btn_apk = self.create_side_button(sidebar, "APK Monitor", lambda: self.switch_tab('apk'))
         self.side_btn_apk.pack(fill='x')
-        self.side_btn_stream = self.create_side_button(sidebar, "Stream Screen", lambda: self.switch_tab('stream'))
-        self.side_btn_stream.pack(fill='x')
-        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk, self.side_btn_stream]
+        
+        # REMOVED: Stream Button
+        
+        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk]
 
         # Content Area
         self.content_area = tk.Frame(self.master, bg=self.COLOR_BG, width=390)
@@ -316,31 +308,24 @@ class App:
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
 
-        # Stream Frame
-        self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, padx=20, pady=20)
-        self.stream_frame.place(relwidth=1, relheight=1)
-        self.stream_frame.grid_rowconfigure(0, weight=0) 
-        self.stream_frame.grid_rowconfigure(1, weight=1) 
-        self.stream_frame.grid_rowconfigure(2, weight=0) 
-        self.stream_frame.grid_columnconfigure(0, weight=1) 
-        
-        tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT).grid(row=0, column=0, pady=(0, 10))
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg=self.COLOR_BG)
-        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5)
-        self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream", style='Raised.TButton', command=self._start_stream)
-        self.stream_start_btn.grid(row=2, column=0, pady=(5,5))
-        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to begin.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        self.stream_status_label.grid(row=3, column=0, pady=(0, 10))
+        # REMOVED: Stream Frame
 
     def switch_tab(self, tab_name):
         self.current_tab = tab_name
-        if tab_name != "stream": self._stop_stream()
-        for btn in self.all_side_buttons: btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
-        if tab_name == 'device': self.device_frame.tkraise(); self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-        elif tab_name == 'api': self.api_frame.tkraise(); self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-        elif tab_name == 'zip': self.zip_frame.tkraise(); self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-        elif tab_name == 'apk': self.apk_frame.tkraise(); self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-        elif tab_name == 'stream': self.stream_frame.tkraise(); self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+        for btn in self.all_side_buttons:
+            btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
+        if tab_name == 'device':
+            self.device_frame.tkraise()
+            self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+        elif tab_name == 'api':
+            self.api_frame.tkraise()
+            self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+        elif tab_name == 'zip':
+            self.zip_frame.tkraise()
+            self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
+        elif tab_name == 'apk':
+            self.apk_frame.tkraise()
+            self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
 
     # --- Config & Monitoring ---
     def _load_configs(self):
@@ -352,13 +337,10 @@ class App:
             self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
             self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
             
-            # --- FIX: Read Prefix ---
             try:
                 self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
-                print(f"Zip Filter Prefix: {self.zip_filename_prefix}")
             except KeyError:
-                self.zip_filename_prefix = "" # No filter
-            # ------------------------
+                self.zip_filename_prefix = "" 
             return True
         except: return False
 
@@ -417,10 +399,9 @@ class App:
         except: pass
     def _periodic_log_save(self):
         if self.is_running: self._auto_save_log(); self.master.after(30000, self._periodic_log_save)
-    def _format_sql_log(self, raw): return raw # Keeping it simple to save space here
+    def _format_sql_log(self, raw): return raw 
 
-    # ... (ADB, Stream, etc.) ...
-    # (Including updated _add_zip_to_monitor with retry)
+    # ... (ADB, etc.) ...
     def _add_zip_to_monitor(self, fp):
         import tkinter as tk
         if fp in self.processing_files: return
@@ -433,10 +414,8 @@ class App:
         iid = self.zip_file_map.get(zp)
         self.master.after(0, self._update_zip_status, iid, "Processing")
         
-        # --- FIX: Increased Wait Time to 10s ---
-        for _ in range(10): # Try 10 times (10 seconds)
+        for _ in range(10): 
             try: 
-                # Try to open in exclusive read mode to ensure it's not being written
                 with open(zp, 'rb'): pass
                 break
             except: time.sleep(1)
@@ -481,7 +460,6 @@ class App:
              if os.path.exists(tmp): shutil.rmtree(tmp)
              self.master.after(0, self._remove_from_processing_list, zp)
 
-    # ... (Rest of standard methods: same as previous valid version) ...
     def _update_zip_status(self, iid, s):
         try:
             if not self.zip_tree.exists(iid): return
@@ -494,105 +472,92 @@ class App:
     def _remove_from_processing_list(self, fp):
         if fp in self.processing_files: self.processing_files.remove(fp)
     
-    # ... (Streaming, APK methods, etc. - keeping the stable versions) ...
-    # (To keep the code block concise but complete, I assume the previous stream/APK logic is injected here)
-    # (I will include the critical parts below)
-
-    def _start_stream(self):
-        from tkinter import messagebox
-        if not self.connected_device:
-            self.stream_status_label.config(text="Error: No device connected.")
-            return
-        if self.scrcpy_process: return
-        if not os.path.exists(self.SCRCPY_PATH):
-            messagebox.showerror("Stream Error", "scrcpy.exe not found."); return
-
-        self.stream_status_label.config(text="Starting stream...")
-        self.stream_start_btn.config(state='disabled')
-        self.master.update_idletasks()
-        target_height = self.stream_embed_frame.winfo_height()
-        if target_height < 200: target_height = 550 
-        
-        src_w, src_h = self._get_device_resolution()
-        if src_w and src_h: self._source_aspect = src_w / src_h
-        else: self._source_aspect = None
-        
-        env = os.environ.copy(); env['ADB'] = self.ADB_PATH
-        self.scrcpy_process = subprocess.Popen([
-            self.SCRCPY_PATH, "-s", self.connected_device,
-            "--window-title=HHT_STREAM", "--max-size", str(target_height), 
-            "--window-x=0", "--window-y=0", "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
-
-        self.stream_window_id = None
-        if self._stream_resize_bind_id:
-            try: self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except: pass
-        self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", lambda e: self._resize_stream_to_fit())
-        threading.Thread(target=self._embed_stream_window, daemon=True).start()
-
-    def _embed_stream_window(self):
-        import ctypes
-        try:
-            hwnd = 0; retries = 20
-            while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
-                hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
-                if hwnd == 0: retries -= 1; time.sleep(0.5)
-            if hwnd == 0: self._stop_stream(); return
-            
-            self.stream_window_id = hwnd
-            frame_id = self.stream_embed_frame.winfo_id()
-            
-            if not self._source_aspect:
-                rect = ctypes.wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                w = max(1, rect.right - rect.left); h = max(1, rect.bottom - rect.top)
-                self._source_aspect = w / h
-            
-            ctypes.windll.user32.SetParent(hwnd, frame_id)
-            self._resize_stream_to_fit()
-            
-            if self.is_running:
-                self.stream_status_label.config(text=f"Streaming: {self.connected_device}")
-                self.stream_start_btn.config(state='normal', text="Stop Stream", command=self._stop_stream)
-        except: self._stop_stream()
-
-    def _resize_stream_to_fit(self, event=None):
-        import ctypes
-        if not self.stream_window_id or not self._source_aspect: return
-        self.master.update_idletasks()
-        fw = max(1, self.stream_embed_frame.winfo_width())
-        fh = max(1, self.stream_embed_frame.winfo_height())
-        
-        nh = fh
-        nw = int(nh * self._source_aspect)
-        if nw > fw: nw = fw; nh = int(nw / self._source_aspect)
-        
-        x = (fw - nw) // 2; y = (fh - nh) // 2
-        try: ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, nw, nh, True)
-        except: pass
-
-    def _stop_stream(self):
-        if self.scrcpy_process: self.scrcpy_process.terminate(); self.scrcpy_process = None
-        if self.is_running:
-            self.stream_status_label.config(text="Click 'Start Stream' to begin.")
-            self.stream_start_btn.config(state='normal', text="Start Stream", command=self._start_stream)
-    def _get_device_resolution(self):
-        try:
-            res = subprocess.run([self.ADB_PATH, "-s", self.connected_device, "shell", "wm", "size"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            for l in res.stdout.splitlines():
-                if "Physical size:" in l: p = l.split(":")[-1].strip().split("x"); return int(p[0]), int(p[1])
-        except: pass
-        return 0,0
+    def get_adb_path(self):
+        if getattr(sys, 'frozen', False): base = sys._MEIPASS
+        else: base = os.path.dirname(os.path.abspath(__file__))
+        p = os.path.join(base, "adb", "adb.exe")
+        return p if os.path.exists(p) else "adb"
     
+    def check_adb(self):
+        try: subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW); return True
+        except: return False
+    def start_adb_server(self):
+        try: subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+        except: pass
+    def refresh_devices(self): threading.Thread(target=self._refresh_devices_worker, daemon=True).start()
+    def _refresh_devices_worker(self):
+        try:
+            res = subprocess.run([self.ADB_PATH, "devices"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            devs = []
+            for line in res.stdout.splitlines()[1:]:
+                if line.strip():
+                    p = line.split('\t')
+                    if len(p) >= 2 and p[1] == 'device': devs.append(p[0])
+            self.master.after(0, self._update_device_ui, devs)
+        except: pass
+    def _update_device_ui(self, devs):
+        for i in self.device_tree.get_children(): self.device_tree.delete(i)
+        all_devs = set(devs)
+        if self.connected_device: all_devs.add(self.connected_device)
+        for d in sorted(list(all_devs)):
+            status = "Connected" if d == self.connected_device else "Available"
+            tag = "connected" if status == "Connected" else "disconnected"
+            self.device_tree.insert('', 'end', values=(d, status), tags=(tag,))
+    def parse_device_list(self, out): return [] 
+    def connect_device(self):
+        sel = self.device_tree.focus()
+        if not sel: messagebox.showwarning("Select Device", "Please select a device."); return
+        dev = self.device_tree.item(sel)['values'][0]
+        if self.connected_device == dev: messagebox.showinfo("Info", "Already connected."); return
+        if self.connected_device: messagebox.showwarning("Warning", "Disconnect current device first."); return
+        threading.Thread(target=self._connect_worker, args=(dev,), daemon=True).start()
+    def _connect_worker(self, dev):
+        try:
+            res = subprocess.run([self.ADB_PATH, "-s", dev, "reverse", "tcp:8000", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
+            if res.returncode == 0:
+                self.connected_device = dev; self.is_disconnecting = False
+                self.master.after(0, self.show_notification, f"Connected: {dev}", True)
+                self.master.after(0, self.refresh_devices); self.master.after(0, self.update_tray_status)
+                self.master.after(0, self._clear_apk_monitor); self.master.after(100, self._scan_existing_apk_files)
+                self.master.after(0, self.disconnect_button.config, {'state':'normal'})
+            else: self.master.after(0, lambda: messagebox.showerror("Error", "Failed to connect"))
+        except Exception as e: self.master.after(0, lambda: messagebox.showerror("Error", str(e)))
+        finally: self.master.after(0, self.connect_button.config, {'state':'normal'})
+    def disconnect_device(self):
+        if not self.connected_device: return
+        threading.Thread(target=self._disconnect_worker, daemon=True).start()
+    def _disconnect_worker(self):
+        try:
+            subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
+            dev = self.connected_device; self.connected_device = None
+            self.master.after(0, self.refresh_devices); self.master.after(0, self.update_tray_status)
+            self.master.after(0, self.show_notification, f"Disconnected: {dev}", False)
+            self.master.after(0, self._clear_apk_monitor)
+            self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
+        except: pass
+
+    def _load_configs(self):
+        config_path = os.path.join(self.base_path, "configs", "config.ini")
+        config = configparser.ConfigParser()
+        if not os.path.exists(config_path): messagebox.showerror("Config Error", "Config not found"); return False
+        try:
+            config.read(config_path)
+            self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
+            self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
+            
+            try:
+                self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
+            except KeyError:
+                self.zip_filename_prefix = "" 
+            return True
+        except: return False
     def _start_monitoring_services(self):
         if self._load_configs():
             if self.zip_monitor_path and os.path.exists(self.zip_monitor_path):
                 self.zip_file_observer = Observer(); self.zip_file_observer.schedule(ZipFileHandler(self), self.zip_monitor_path, recursive=False); self.zip_file_observer.start()
             if self.apk_monitor_path and os.path.exists(self.apk_monitor_path):
                 self.apk_file_observer = Observer(); self.apk_file_observer.schedule(ApkFileHandler(self), self.apk_monitor_path, recursive=False); self.apk_file_observer.start()
-    
-    def _scan_existing_apk_files(self): # Standard impl
+    def _scan_existing_apk_files(self):
         if not self.apk_monitor_path or not os.path.exists(self.apk_monitor_path): return
         try:
             for f in os.listdir(self.apk_monitor_path):
@@ -600,24 +565,21 @@ class App:
                     fp = os.path.join(self.apk_monitor_path, f)
                     if fp not in self.apk_file_map and fp not in self.apk_processing_files: self._add_apk_to_monitor(fp)
         except: pass
-        
-    def _clear_apk_monitor(self): # Standard impl
+    def _clear_apk_monitor(self):
         try:
             for i in self.apk_tree.get_children(): self.apk_tree.delete(i)
         except: pass
         self.apk_processed_count=0; self.apk_file_map.clear(); self.apk_processing_files.clear()
         try: self.apk_count_label.config(text="Total APKs Processed: 0")
         except: pass
-        
-    def _add_apk_to_monitor(self, fp): # Standard impl
+    def _add_apk_to_monitor(self, fp):
         import tkinter as tk
         if fp in self.apk_file_map: return
         self.apk_processing_files.add(fp)
         iid = self.apk_tree.insert('', 'end', values=(os.path.basename(fp), 'Pending'), tags=('pending',))
         self.apk_file_map[fp] = iid
         threading.Thread(target=self._run_apk_install, args=(fp, iid), daemon=True).start()
-        
-    def _run_apk_install(self, fp, iid): # Standard impl
+    def _run_apk_install(self, fp, iid):
         self.master.after(0, self._update_apk_status, iid, "Checking...")
         for _ in range(5):
             try: 
@@ -650,7 +612,7 @@ class App:
         except Exception as e: self.master.after(0, self._update_apk_status, iid, f"Error: {e}")
         finally: self.master.after(0, self._remove_from_apk_processing_list, fp)
         
-    def _update_apk_status(self, iid, msg): # Standard
+    def _update_apk_status(self, iid, msg):
         try:
             if not self.apk_tree.exists(iid): return
             fn = self.apk_tree.item(iid, 'values')[0]
@@ -663,86 +625,21 @@ class App:
     def _remove_from_apk_processing_list(self, fp): 
         if fp in self.apk_processing_files: self.apk_processing_files.remove(fp)
 
-    # ... (Standard ADB/Device Methods) ...
-    def get_adb_path(self):
-        if getattr(sys, 'frozen', False): base = sys._MEIPASS
-        else: base = os.path.dirname(os.path.abspath(__file__))
-        p = os.path.join(base, "adb", "adb.exe")
-        return p if os.path.exists(p) else "adb"
-    def get_scrcpy_path(self):
-        if getattr(sys, 'frozen', False): base = sys._MEIPASS
-        else: base = os.path.dirname(os.path.abspath(__file__))
-        p = os.path.join(base, "scrcpy", "scrcpy.exe")
-        return p if os.path.exists(p) else "scrcpy.exe"
-    def check_adb(self):
-        try: subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW); return True
-        except: return False
-    def start_adb_server(self):
-        try: subprocess.run([self.ADB_PATH, "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
-        except: pass
-    def refresh_devices(self): threading.Thread(target=self._refresh_devices_worker, daemon=True).start()
-    def _refresh_devices_worker(self):
-        try:
-            res = subprocess.run([self.ADB_PATH, "devices"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            devs = []
-            for line in res.stdout.splitlines()[1:]:
-                if line.strip():
-                    p = line.split('\t')
-                    if len(p) >= 2 and p[1] == 'device': devs.append(p[0])
-            self.master.after(0, self._update_device_ui, devs)
-        except: pass
-    def _update_device_ui(self, devs):
-        for i in self.device_tree.get_children(): self.device_tree.delete(i)
-        all_devs = set(devs)
-        if self.connected_device: all_devs.add(self.connected_device)
-        for d in sorted(list(all_devs)):
-            status = "Connected" if d == self.connected_device else "Available"
-            tag = "connected" if status == "Connected" else "disconnected"
-            self.device_tree.insert('', 'end', values=(d, status), tags=(tag,))
-    def parse_device_list(self, out): return []
-    def connect_device(self):
-        sel = self.device_tree.focus()
-        if not sel: messagebox.showwarning("Select Device", "Please select a device."); return
-        dev = self.device_tree.item(sel)['values'][0]
-        if self.connected_device == dev: messagebox.showinfo("Info", "Already connected."); return
-        if self.connected_device: messagebox.showwarning("Warning", "Disconnect current device first."); return
-        threading.Thread(target=self._connect_worker, args=(dev,), daemon=True).start()
-    def _connect_worker(self, dev):
-        try:
-            res = subprocess.run([self.ADB_PATH, "-s", dev, "reverse", "tcp:8000", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
-            if res.returncode == 0:
-                self.connected_device = dev; self.is_disconnecting = False
-                self.master.after(0, self.show_notification, f"Connected: {dev}", True)
-                self.master.after(0, self.refresh_devices); self.master.after(0, self.update_tray_status)
-                self.master.after(0, self._clear_apk_monitor); self.master.after(100, self._scan_existing_apk_files)
-                self.master.after(0, self.disconnect_button.config, {'state':'normal'})
-            else: self.master.after(0, lambda: messagebox.showerror("Error", "Failed to connect"))
-        except Exception as e: self.master.after(0, lambda: messagebox.showerror("Error", str(e)))
-        finally: self.master.after(0, self.connect_button.config, {'state':'normal'})
-    def disconnect_device(self):
-        if not self.connected_device: return
-        threading.Thread(target=self._disconnect_worker, daemon=True).start()
-    def _disconnect_worker(self):
-        try:
-            subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
-            dev = self.connected_device; self.connected_device = None
-            self.master.after(0, self.refresh_devices); self.master.after(0, self.update_tray_status)
-            self.master.after(0, self.show_notification, f"Disconnected: {dev}", False)
-            self.master.after(0, self._clear_apk_monitor)
-            self._stop_stream()
-            self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
-        except: pass
-        
     def on_app_quit(self):
         self.is_running = False
-        self._auto_save_log()
-        self._stop_stream()
+        try:
+            c = self.api_log_text.get("1.0", "end-1c")
+            threading.Thread(target=self._save_log_to_file_worker, args=(c,), daemon=True).start()
+        except: pass
+        
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
         if self.connected_device:
             subprocess.run([self.ADB_PATH, "-s", self.connected_device, "reverse", "--remove", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
+        
         try: subprocess.run([self.ADB_PATH, "kill-server"], creationflags=subprocess.CREATE_NO_WINDOW)
         except: pass
+        
         if os.path.exists(self.lock_file_path):
             try: os.remove(self.lock_file_path)
             except: pass
@@ -755,9 +652,6 @@ if __name__ == "__main__":
     import pystray
     import ctypes
     import psutil
-
-    try: ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except: pass
 
     temp_dir = os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Temp')
     lock_file = os.path.join(temp_dir, 'hht_android_connect.lock')
