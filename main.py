@@ -1,5 +1,5 @@
 # This code has been verified to have correct indentation.
-# VERSION: 1.0.6 (Remove Stream + Compact UI + Zip Safe Zone)
+# VERSION: 1.0.7 (Auto Connect Restored + Safe Zone + Compact UI)
 import subprocess
 import threading
 import os
@@ -60,7 +60,7 @@ class ApkFileHandler(FileSystemEventHandler):
 
 class App:
     
-    APP_VERSION = "1.0.6" 
+    APP_VERSION = "1.0.7" 
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -70,7 +70,7 @@ class App:
         self.master = master
         self.tray_icon = None
         self.is_running = True
-        self.is_disconnecting = False
+        self.is_connecting = False # Flag to prevent spamming connections
         self.api_process = None
         self.last_search_term = ""
         self.last_search_pos = "1.0"
@@ -109,9 +109,9 @@ class App:
 
         master.title(f"HHT Connect - v{self.APP_VERSION}")
 
-        # --- UI: Compact Size (Fixed) ---
+        # --- UI: Compact Size ---
         app_width = 600  
-        app_height = 420 # Reduced height for compact look (No stream)
+        app_height = 420 
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -143,7 +143,6 @@ class App:
         self.style.theme_use('clam')
         self.style.configure('.', font=('Segoe UI', 9), background=self.COLOR_BG, foreground=self.COLOR_TEXT, borderwidth=0)
         self.style.configure('TFrame', background=self.COLOR_BG)
-        # Compact Treeview Row
         self.style.configure('Treeview', background=self.COLOR_BG, fieldbackground=self.COLOR_BG, foreground=self.COLOR_TEXT, rowheight=26, font=('Consolas', 10))
         self.style.map('Treeview', background=[('selected', self.COLOR_SHADOW_DARK)], foreground=[('selected', self.COLOR_SHADOW_LIGHT)])
         self.style.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'), background=self.COLOR_BG, relief='flat')
@@ -236,7 +235,6 @@ class App:
         self.side_btn_zip.pack(fill='x')
         self.side_btn_apk = self.create_side_button(sidebar, "APK Monitor", lambda: self.switch_tab('apk'))
         self.side_btn_apk.pack(fill='x')
-        # REMOVED STREAM BUTTON
         self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk]
 
         # Content Area
@@ -481,6 +479,8 @@ class App:
         if self.connected_device: messagebox.showwarning("Warn", "Disconnect first"); return
         threading.Thread(target=self._connect_worker, args=(dev,), daemon=True).start()
     def _connect_worker(self, dev):
+        if self.is_connecting: return
+        self.is_connecting = True
         try:
             res = subprocess.run([self.ADB_PATH, "-s", dev, "reverse", "tcp:8000", "tcp:8000"], creationflags=subprocess.CREATE_NO_WINDOW)
             if res.returncode == 0:
@@ -491,7 +491,9 @@ class App:
                 self.master.after(0, self.disconnect_button.config, {'state':'normal'})
             else: self.master.after(0, lambda: messagebox.showerror("Error", "Failed"))
         except: pass
-        finally: self.master.after(0, self.connect_button.config, {'state':'normal'})
+        finally: 
+            self.is_connecting = False
+            self.master.after(0, self.connect_button.config, {'state':'normal'})
     def disconnect_device(self):
         if not self.connected_device: return
         threading.Thread(target=self._disconnect_worker, daemon=True).start()
@@ -675,16 +677,34 @@ class App:
 
     def device_monitor_loop(self):
         while self.is_running:
-            if self.connected_device:
+            try:
                 res = subprocess.run([self.ADB_PATH, "devices"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                found = False
-                for line in res.stdout.splitlines():
-                    if self.connected_device in line and "device" in line: found = True; break
-                if not found:
-                    self.master.after(0, self.show_notification, f"Lost connection: {self.connected_device}", False)
-                    self.connected_device = None
-                    self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
-                    self.master.after(0, self.refresh_devices)
+                curr_devs = []
+                for line in res.stdout.splitlines()[1:]:
+                    if line.strip():
+                        p = line.split('\t')
+                        if len(p) >= 2 and p[1] == 'device': curr_devs.append(p[0])
+                
+                # Case 1: Handle Disconnect
+                if self.connected_device:
+                    if self.connected_device not in curr_devs:
+                        if not self.is_disconnecting:
+                            self.is_disconnecting = True
+                            self.master.after(0, self.show_notification, f"Lost connection: {self.connected_device}", False)
+                            self.connected_device = None
+                            self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
+                            self.master.after(0, self.refresh_devices)
+                            self.master.after(0, self.update_tray_status)
+                            self.master.after(0, self._clear_apk_monitor)
+                            
+                # Case 2: Auto Connect
+                elif curr_devs:
+                    target = curr_devs[0]
+                    # Call connection worker (it handles is_connecting check internally)
+                    threading.Thread(target=self._connect_worker, args=(target,), daemon=True).start()
+                    time.sleep(2) # Prevent rapid loops
+
+            except Exception: pass
             time.sleep(3)
 
     # --- Exit ---
