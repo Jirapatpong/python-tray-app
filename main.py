@@ -1,5 +1,5 @@
-
 # This code has been verified to have correct indentation.
+# VERSION: B1.00 (Lite Enhanced - Based on Backup + Fixes)
 import subprocess
 import threading
 import os
@@ -8,8 +8,8 @@ import time
 import queue
 import zipfile
 import shutil
-import configparser # Using configparser for .ini files
-import datetime # For log date management
+import configparser 
+import datetime 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -36,6 +36,15 @@ class ZipFileHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.zip'):
+            filename = os.path.basename(event.src_path)
+            
+            # --- FEATURE: Prefix Filter ---
+            # ตรวจสอบว่ามี Prefix ที่ตั้งไว้ไหม และชื่อไฟล์ตรงไหม
+            if self.app.zip_filename_prefix and not filename.startswith(self.app.zip_filename_prefix):
+                print(f"Ignored file (prefix mismatch): {filename}")
+                return
+            # ------------------------------
+
             if event.src_path in self.app.processing_files:
                 print(f"Ignoring self-generated file event: {event.src_path}")
                 return
@@ -51,14 +60,10 @@ class ApkFileHandler(FileSystemEventHandler):
         """Helper to process both create and modify events."""
         if not event.is_directory and event.src_path.endswith('.apk'):
             
-            # Check 1: Have we *ever* seen this file this session?
             if event.src_path in self.app.apk_file_map:
-                print(f"Ignoring duplicate event for already processed file: {event.src_path}")
                 return
             
-            # Check 2: Is this file *currently* in the queue?
             if event.src_path in self.app.apk_processing_files:
-                print(f"Ignoring duplicate event for file in queue: {event.src_path}")
                 return
             
             print(f"New APK file event ({event.event_type}): {event.src_path}")
@@ -68,10 +73,12 @@ class ApkFileHandler(FileSystemEventHandler):
         self.process_event(event)
         
     def on_modified(self, event):
-        # This catches files that are "pasted" or slowly copied
         self.process_event(event)
 
 class App:
+    
+    APP_VERSION = "B1.00" # Lite Version
+
     def __init__(self, master, lock_file_path):
         import tkinter as tk
         from tkinter import ttk, scrolledtext
@@ -93,19 +100,21 @@ class App:
         
         # --- Variables for auto-save log & file monitoring ---
         self.log_filepath = None
-        self.log_dir = None # Store log directory
-        self.current_log_date = None # Track current log date
+        self.log_dir = None 
+        self.current_log_date = None 
+        
+        # Configs
         self.zip_monitor_path = None
+        self.zip_filename_prefix = "" # New Config
         self.apk_monitor_path = None
+
         self.zip_file_observer = None
         self.apk_file_observer = None
         
-        # --- Zip Monitor ---
         self.zip_processed_count = 0
         self.zip_file_map = {}
         self.processing_files = set()
         
-        # --- APK Monitor ---
         self.apk_processed_count = 0
         self.apk_file_map = {}
         self.apk_processing_files = set()
@@ -115,10 +124,10 @@ class App:
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
 
-        master.title("HHT Android Connect")
+        master.title(f"HHT Android Connect - v{self.APP_VERSION}")
 
         app_width = 560
-        app_height = 360
+        app_height = 360 # Reverted to compact size since no stream
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -298,10 +307,17 @@ class App:
         self.api_status_label.grid(row=0, column=1, sticky='w', padx=5)
         self.search_entry = self.create_neumorphic_entry(api_header_frame)
         self.search_entry.grid(row=0, column=2, sticky='e', padx=(0, 5))
+        
+        # --- FIX: Correctly bind search_api_logs ---
         search_button = ttk.Button(api_header_frame, text="Search", style='Raised.TButton', command=self.search_api_logs)
         search_button.grid(row=0, column=3, sticky='e', padx=(0, 5))
+        
+        save_log_button = ttk.Button(api_header_frame, text="Save Log", style='Raised.TButton', command=self.save_api_log)
+        save_log_button.grid(row=0, column=4, sticky='e', padx=(0, 5))
+        
         self.refresh_api_button = ttk.Button(api_header_frame, text="Restart API", style='Raised.TButton', command=self.refresh_api_exe)
-        self.refresh_api_button.grid(row=0, column=4, sticky='e', padx=(0,5))
+        self.refresh_api_button.grid(row=0, column=5, sticky='e', padx=(0,5))
+        
         log_frame = tk.Frame(self.api_frame, bg=self.COLOR_SHADOW_DARK, bd=0)
         log_frame.grid(row=1, column=0, sticky='nsew')
         self.api_log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state='disabled', bg=self.COLOR_BG, fg=self.COLOR_TEXT, font=('Consolas', 8), relief='flat', bd=2, highlightthickness=0)
@@ -310,7 +326,7 @@ class App:
         self.api_log_text.tag_config('current_search', background=self.COLOR_WARNING, foreground='black')
 
         # Frame 3: Zip Monitor
-        self.zip_frame = tk.Frame(self.content_frame, bg=self.COLOR_BG)
+        self.zip_frame = tk.Frame(self.content_area, bg=self.COLOR_BG)
         self.zip_frame.grid(row=0, column=0, sticky='nsew')
         self.zip_frame.grid_rowconfigure(1, weight=1)
         self.zip_frame.grid_columnconfigure(0, weight=1)
@@ -531,6 +547,7 @@ class App:
             self.api_status_label.config(text="API Status: Offline", fg=self.COLOR_DANGER)
         self.update_tray_status()
 
+    # --- FIX: Re-added the missing method ---
     def search_api_logs(self):
         import tkinter as tk
         search_term = self.search_entry.winfo_children()[0].get()
@@ -554,6 +571,37 @@ class App:
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
         self.api_log_text.config(state='disabled')
+
+    def save_api_log(self):
+        from tkinter import messagebox
+        try:
+            raw_log_content = self.api_log_text.get("1.0", "end-1c")
+
+            if not raw_log_content.strip():
+                messagebox.showinfo("Log Empty", "The API log is empty. Nothing to save.")
+                return
+
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+            else:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+            
+            log_dir = os.path.join(base_path, "log")
+            os.makedirs(log_dir, exist_ok=True)
+
+            timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"api_log_{timestamp}.txt"
+            filepath = os.path.join(log_dir, filename)
+
+            formatted_content = self._format_sql_log(raw_log_content)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(formatted_content)
+            
+            messagebox.showinfo("Success", f"Log saved successfully to:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save log file.\n\nError: {e}")
 
     def start_api_exe(self):
         self.api_log_queue = queue.Queue()
@@ -830,7 +878,6 @@ class App:
 
     # --- Config & Monitoring Service Methods ---
     def _load_configs(self):
-        """Loads paths from config.ini using configparser."""
         from tkinter import messagebox
         config_path = os.path.join(self.base_path, "configs", "config.ini")
         config = configparser.ConfigParser()
@@ -860,6 +907,13 @@ class App:
                     print(f"Monitoring APK path: {self.apk_monitor_path}")
             except KeyError:
                 messagebox.showerror("Config Error", "MONITOR_PATH not found in [APK_INSTALLER] section of config.ini")
+
+            # --- FEATURE 2: Read Prefix ---
+            try:
+                self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
+                print(f"Zip Filter Prefix: {self.zip_filename_prefix}")
+            except KeyError:
+                self.zip_filename_prefix = "" # No filter
                 
             return True
             
@@ -922,8 +976,8 @@ class App:
                 self.zip_tree.item(item_id, values=(filename, 'Done'), tags=('done',))
                 self.zip_processed_count += 1
                 self.zip_count_label.config(text=f"Total Files Processed: {self.zip_processed_count}")
-            elif status == "Error":
-                self.zip_tree.item(item_id, values=(filename, 'Error'), tags=('error',))
+            elif "Error" in status:
+                self.zip_tree.item(item_id, values=(filename, status), tags=('error',))
         except Exception as e:
             print(f"Error updating zip status in UI: {e}")
 
@@ -939,9 +993,10 @@ class App:
 
         self.master.after(0, self._update_zip_status, item_id, "Processing")
         
-        for _ in range(5):
+        # --- FEATURE 1: Robust Retry (10s) ---
+        for _ in range(10): 
             try:
-                with open(zip_path, 'rb') as f: pass 
+                with open(zip_path, 'rb'): pass
                 break 
             except PermissionError: 
                 time.sleep(1) 
@@ -950,8 +1005,8 @@ class App:
                 self.master.after(0, self._remove_from_processing_list, zip_path)
                 return
         else: 
-            print(f"Failed to access file {zip_path} after 5 seconds, skipping.")
-            self.master.after(0, self._update_zip_status, item_id, "Error")
+            print(f"Failed to access file {zip_path} after 10 seconds, skipping.")
+            self.master.after(0, self._update_zip_status, item_id, "Error: File Locked")
             self.master.after(0, self._remove_from_processing_list, zip_path)
             return
 
@@ -1236,6 +1291,16 @@ class App:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e: print(f"Could not disconnect on exit: {e}")
         
+        # --- FIX: Explicitly kill the ADB server ---
+        try:
+            print("Shutting down ADB server...")
+            subprocess.run([self.ADB_PATH, "kill-server"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception as e:
+            print(f"Error killing ADB server: {e}")
+        # --- END FIX ---
+        
         try:
             if os.path.exists(self.lock_file_path): os.remove(self.lock_file_path)
         except Exception as e: print(f"Could not remove lock file: {e}")
@@ -1266,25 +1331,17 @@ if __name__ == "__main__":
 
     with open(lock_file, 'w') as f: f.write(str(os.getpid()))
 
-    # --- Admin Check ---
-    def is_admin():
-        try: return ctypes.windll.shell32.IsUserAnAdmin()
-        except: return False
-
     # --- Launch Application ---
-    if is_admin():
-        try:
-            root = tk.Tk()
-            app = App(root, lock_file_path=lock_file) 
-            root.protocol('WM_DELETE_WINDOW', app.hide_window)
-            initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
-            icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
-            app.tray_icon = icon
-            threading.Thread(target=icon.run, daemon=True).start()
-            root.mainloop()
-        except Exception as e:
-            if os.path.exists(lock_file): os.remove(lock_file)
-            messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
-    else:
+    # Removed is_admin() check, PyInstaller handles this with --uac-admin
+    try:
+        root = tk.Tk()
+        app = App(root, lock_file_path=lock_file) 
+        root.protocol('WM_DELETE_WINDOW', app.hide_window)
+        initial_menu = app.create_tray_menu("Device: Disconnected", "API: Offline")
+        icon = pystray.Icon("HHTAndroidConnect", app.icon_image, "HHT Android Connect", initial_menu)
+        app.tray_icon = icon
+        threading.Thread(target=icon.run, daemon=True).start()
+        root.mainloop()
+    except Exception as e:
         if os.path.exists(lock_file): os.remove(lock_file)
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        messagebox.showerror("Application Error", f"An unexpected error occurred: {e}")
