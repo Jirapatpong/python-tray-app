@@ -1,5 +1,5 @@
 # This code has been verified to have correct indentation.
-# VERSION: B1.00 (Lite - No Streaming - FIXED)
+# VERSION: B1.00 (Lite - No Streaming - RE-VERIFIED)
 import subprocess
 import threading
 import os
@@ -10,7 +10,7 @@ import zipfile
 import shutil
 import configparser
 import datetime
-# import ctypes # REMOVED: No longer needed
+# import ctypes # REMOVED
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -39,7 +39,6 @@ class ZipFileHandler(FileSystemEventHandler):
             filename = os.path.basename(event.src_path)
             if self.app.zip_filename_prefix and not filename.startswith(self.app.zip_filename_prefix):
                 return
-
             if event.src_path in self.app.processing_files: return
             self.app.master.after(0, self.app._add_zip_to_monitor, event.src_path)
 
@@ -170,7 +169,6 @@ class App:
         
         self.switch_tab('device')
 
-    # ... (Notifications & Helper Methods) ...
     def show_notification(self, message, is_connected):
         import tkinter as tk
         if self.notification_timer: self.master.after_cancel(self.notification_timer)
@@ -230,8 +228,6 @@ class App:
         self.side_btn_zip.pack(fill='x')
         self.side_btn_apk = self.create_side_button(sidebar, "APK Monitor", lambda: self.switch_tab('apk'))
         self.side_btn_apk.pack(fill='x')
-        
-        # REMOVED: Stream Button
         
         self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk]
 
@@ -308,8 +304,6 @@ class App:
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
 
-        # REMOVED: Stream Frame
-
     def switch_tab(self, tab_name):
         self.current_tab = tab_name
         for btn in self.all_side_buttons:
@@ -362,7 +356,6 @@ class App:
                 self.api_log_text.see(start_pos)
                 self.last_search_pos = end_pos
         self.api_log_text.config(state='disabled')
-    # -----------------------------------------------
 
     def start_api_exe(self):
         self.api_log_queue = queue.Queue()
@@ -1036,7 +1029,7 @@ class App:
         """Removes an APK from the processing set once done/failed."""
         if filepath in self.apk_processing_files:
             self.apk_processing_files.remove(filepath)
-            
+
     # --- Application Exit Method ---
     def on_app_quit(self):
         self.is_running = False
