@@ -1,5 +1,5 @@
 # This code has been verified to have correct indentation.
-# VERSION: 1.0.5 (Final Robust: Safe Zone Processing + Compact UI + Filter)
+# VERSION: 1.0.6 (Remove Stream + Compact UI + Zip Safe Zone)
 import subprocess
 import threading
 import os
@@ -11,7 +11,6 @@ import shutil
 import configparser
 import datetime
 import ctypes
-from ctypes import wintypes
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tkinter import filedialog, messagebox
@@ -39,7 +38,6 @@ class ZipFileHandler(FileSystemEventHandler):
             filename = os.path.basename(event.src_path)
             
             # --- FEATURE: Prefix Filter ---
-            # ถ้า Config ระบุ Prefix ไว้ แล้วไฟล์ไม่ตรงเงื่อนไข -> ข้ามทันที
             if self.app.zip_filename_prefix and not filename.startswith(self.app.zip_filename_prefix):
                 return
             # ------------------------------
@@ -62,7 +60,7 @@ class ApkFileHandler(FileSystemEventHandler):
 
 class App:
     
-    APP_VERSION = "1.0.5" 
+    APP_VERSION = "1.0.6" 
 
     def __init__(self, master, lock_file_path):
         import tkinter as tk
@@ -88,7 +86,7 @@ class App:
         self.log_dir = None
         self.current_log_date = None
         self.zip_monitor_path = None
-        self.zip_filename_prefix = "" # Loaded from config
+        self.zip_filename_prefix = "" 
         self.apk_monitor_path = None
         
         self.zip_file_observer = None
@@ -102,11 +100,6 @@ class App:
         self.apk_file_map = {}
         self.apk_processing_files = set()
         
-        # Stream Variables
-        self.scrcpy_process = None
-        self.stream_window_id = None
-        self._source_aspect = None  
-        self._stream_resize_bind_id = None
         self.current_tab = "device"
         
         if getattr(sys, 'frozen', False):
@@ -116,9 +109,9 @@ class App:
 
         master.title(f"HHT Connect - v{self.APP_VERSION}")
 
-        # --- UI: Compact Size ---
+        # --- UI: Compact Size (Fixed) ---
         app_width = 600  
-        app_height = 520 
+        app_height = 420 # Reduced height for compact look (No stream)
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x_pos = screen_width - app_width - 20
@@ -160,7 +153,6 @@ class App:
         self.style.map('Raised.TButton', background=[('active', self.COLOR_SHADOW_DARK)])
 
         self.ADB_PATH = self.get_adb_path()
-        self.SCRCPY_PATH = self.get_scrcpy_path()
         
         if not self.check_adb():
             messagebox.showerror("ADB Error", "Android Debug Bridge (ADB) not found.")
@@ -244,9 +236,8 @@ class App:
         self.side_btn_zip.pack(fill='x')
         self.side_btn_apk = self.create_side_button(sidebar, "APK Monitor", lambda: self.switch_tab('apk'))
         self.side_btn_apk.pack(fill='x')
-        self.side_btn_stream = self.create_side_button(sidebar, "Stream Screen", lambda: self.switch_tab('stream'))
-        self.side_btn_stream.pack(fill='x')
-        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk, self.side_btn_stream]
+        # REMOVED STREAM BUTTON
+        self.all_side_buttons = [self.side_btn_device, self.side_btn_api, self.side_btn_zip, self.side_btn_apk]
 
         # Content Area
         self.content_area = tk.Frame(self.master, bg=self.COLOR_BG, width=430)
@@ -260,7 +251,7 @@ class App:
         self.device_frame.grid_columnconfigure(0, weight=1)
         self.device_tree = ttk.Treeview(self.device_frame, columns=('device_id', 'status'), show='headings')
         self.device_tree.heading('device_id', text='DEVICE ID', anchor='w'); self.device_tree.column('device_id', width=240)
-        self.device_tree.heading('status', text='STATUS', anchor='w'); self.device_tree.column('status', anchor='center', width=100)
+        self.device_tree.heading('status', text='STATUS', anchor='center'); self.device_tree.column('status', anchor='center', width=100)
         self.device_tree.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
         self.device_tree.tag_configure('connected', foreground=self.COLOR_SUCCESS, font=('Segoe UI', 9, 'bold'))
         self.device_tree.tag_configure('disconnected', foreground=self.COLOR_TEXT)
@@ -322,117 +313,13 @@ class App:
         self.apk_tree.tag_configure('error', foreground=self.COLOR_DANGER, font=('Segoe UI', 9, 'bold'))
         self.apk_tree.tag_configure('skipped', foreground=self.COLOR_TEXT, font=('Segoe UI', 9, 'italic'))
 
-        # Stream Frame (Embedded)
-        self.stream_frame = tk.Frame(self.content_area, bg=self.COLOR_BG, **pad_cfg)
-        self.stream_frame.place(relwidth=1, relheight=1)
-        self.stream_frame.grid_rowconfigure(0, weight=0) 
-        self.stream_frame.grid_rowconfigure(1, weight=1) 
-        self.stream_frame.grid_rowconfigure(2, weight=0) 
-        self.stream_frame.grid_columnconfigure(0, weight=1) 
-        
-        tk.Label(self.stream_frame, text="Device Screen Stream", font=('Segoe UI', 12, 'bold'), bg=self.COLOR_BG, fg=self.COLOR_TEXT).grid(row=0, column=0, pady=(0, 10))
-        self.stream_embed_frame = tk.Frame(self.stream_frame, bg=self.COLOR_BG) # Match App BG
-        self.stream_embed_frame.grid(row=1, column=0, sticky='nsew', pady=5)
-        self.stream_start_btn = ttk.Button(self.stream_frame, text="Start Stream", style='Raised.TButton', command=self._start_stream)
-        self.stream_start_btn.grid(row=2, column=0, pady=(5,5))
-        self.stream_status_label = tk.Label(self.stream_frame, text="Click 'Start Stream' to begin.", font=('Segoe UI', 9), bg=self.COLOR_BG, fg=self.COLOR_TEXT)
-        self.stream_status_label.grid(row=3, column=0, pady=(0, 10))
-
     def switch_tab(self, tab_name):
         self.current_tab = tab_name
-        if tab_name != "stream": self._stop_stream()
         for btn in self.all_side_buttons: btn.config(bg=self.COLOR_SIDEBAR_BTN_INACTIVE, fg=self.COLOR_SIDEBAR_TEXT_INACTIVE)
         if tab_name == 'device': self.device_frame.tkraise(); self.side_btn_device.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'api': self.api_frame.tkraise(); self.side_btn_api.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'zip': self.zip_frame.tkraise(); self.side_btn_zip.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
         elif tab_name == 'apk': self.apk_frame.tkraise(); self.side_btn_apk.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-        elif tab_name == 'stream': self.stream_frame.tkraise(); self.side_btn_stream.config(bg=self.COLOR_SIDEBAR_BTN_ACTIVE, fg=self.COLOR_SIDEBAR_TEXT_ACTIVE)
-
-    # --- NEW: Screen Streaming Methods ---
-    def _start_stream(self):
-        from tkinter import messagebox
-        if not self.connected_device:
-            self.stream_status_label.config(text="Error: No device connected.")
-            return
-        if self.scrcpy_process: return
-        if not os.path.exists(self.SCRCPY_PATH):
-            messagebox.showerror("Stream Error", "scrcpy.exe not found.")
-            self.stream_status_label.config(text="Error: scrcpy.exe not found.")
-            return
-
-        self.stream_status_label.config(text="Starting stream...")
-        self.stream_start_btn.config(state='disabled')
-        self.master.update_idletasks()
-        
-        target_height = self.stream_embed_frame.winfo_height()
-        if target_height < 200: target_height = 600 
-
-        env = os.environ.copy(); env['ADB'] = self.ADB_PATH
-
-        self.scrcpy_process = subprocess.Popen([
-            self.SCRCPY_PATH, "-s", self.connected_device,
-            "--window-title=HHT_STREAM",
-            "--window-x=0", "--window-y=0", "--window-borderless"
-        ], creationflags=subprocess.CREATE_NO_WINDOW, env=env)
-
-        self.stream_window_id = None
-        if self._stream_resize_bind_id:
-            try: self.stream_embed_frame.unbind("<Configure>", self._stream_resize_bind_id)
-            except: pass
-        self._stream_resize_bind_id = self.stream_embed_frame.bind("<Configure>", lambda e: self._resize_stream_to_fit())
-        threading.Thread(target=self._embed_stream_window, daemon=True).start()
-
-    def _embed_stream_window(self):
-        import ctypes
-        try:
-            hwnd = 0; retries = 20
-            while hwnd == 0 and retries > 0 and self.is_running and self.current_tab == 'stream':
-                hwnd = ctypes.windll.user32.FindWindowW(None, "HHT_STREAM")
-                if hwnd == 0: retries -= 1; time.sleep(0.5)
-            if hwnd == 0: self._stop_stream(); return
-
-            self.stream_window_id = hwnd
-            frame_id = self.stream_embed_frame.winfo_id()
-            
-            # Calculate Aspect Ratio from Original Window
-            rect = ctypes.wintypes.RECT()
-            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            w = max(1, rect.right - rect.left); h = max(1, rect.bottom - rect.top)
-            self._source_aspect = w / h
-            
-            # Embed
-            ctypes.windll.user32.SetParent(hwnd, frame_id)
-            
-            # Initial Resize
-            self._resize_stream_to_fit()
-            
-            if self.is_running:
-                self.stream_status_label.config(text=f"Streaming: {self.connected_device}")
-                self.stream_start_btn.config(state='normal', text="Stop Stream", command=self._stop_stream)
-        except: self._stop_stream()
-
-    def _resize_stream_to_fit(self, event=None):
-        import ctypes
-        if not self.stream_window_id or not self._source_aspect: return
-        self.master.update_idletasks()
-        fw = max(1, self.stream_embed_frame.winfo_width())
-        fh = max(1, self.stream_embed_frame.winfo_height())
-        
-        nh = fh
-        nw = int(nh * self._source_aspect)
-        if nw > fw:
-            nw = fw
-            nh = int(nw / self._source_aspect)
-        
-        x = (fw - nw) // 2; y = (fh - nh) // 2
-        try: ctypes.windll.user32.MoveWindow(self.stream_window_id, x, y, nw, nh, True)
-        except: pass
-
-    def _stop_stream(self):
-        if self.scrcpy_process: self.scrcpy_process.terminate(); self.scrcpy_process = None
-        if self.is_running:
-            try: self.stream_status_label.config(text="Click 'Start Stream' to begin."); self.stream_start_btn.config(state='normal', text="Start Stream", command=self._start_stream)
-            except: pass
 
     # --- Config & Monitoring ---
     def _load_configs(self):
@@ -443,8 +330,6 @@ class App:
             config.read(config_path)
             self.zip_monitor_path = config['SETTING']['DEFAULT_PRICE_TAG_PATH']
             self.apk_monitor_path = config['APK_INSTALLER']['MONITOR_PATH']
-            
-            # --- FEATURE: Prefix ---
             try: self.zip_filename_prefix = config['SETTING']['ZIP_FILENAME_PREFIX']
             except KeyError: self.zip_filename_prefix = ""
             return True
@@ -556,16 +441,12 @@ class App:
     def _periodic_log_save(self):
         if self.is_running: self._auto_save_log(); self.master.after(30000, self._periodic_log_save)
     def _format_sql_log(self, raw): return raw
-    def hide_window(self): self._stop_stream(); self.master.withdraw()
+    def hide_window(self): self.master.withdraw()
     def show_window(self, icon=None, item=None): self.master.deiconify(); self.master.lift(); self.master.focus_force()
     def get_adb_path(self):
         if getattr(sys, 'frozen', False): base = sys._MEIPASS
         else: base = os.path.dirname(os.path.abspath(__file__))
         p = os.path.join(base, "adb", "adb.exe"); return p if os.path.exists(p) else "adb"
-    def get_scrcpy_path(self):
-        if getattr(sys, 'frozen', False): base = sys._MEIPASS
-        else: base = os.path.dirname(os.path.abspath(__file__))
-        p = os.path.join(base, "scrcpy", "scrcpy.exe"); return p if os.path.exists(p) else "scrcpy.exe"
     def check_adb(self):
         try: subprocess.run([self.ADB_PATH, "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW); return True
         except: return False
@@ -621,7 +502,6 @@ class App:
             self.master.after(0, self.refresh_devices); self.master.after(0, self.update_tray_status)
             self.master.after(0, self.show_notification, f"Disconnected: {dev}", False)
             self.master.after(0, self._clear_apk_monitor)
-            self._stop_stream()
             self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
         except: pass
     def _start_monitoring_services(self):
@@ -805,7 +685,6 @@ class App:
                     self.connected_device = None
                     self.master.after(0, self.disconnect_button.config, {'state':'disabled'})
                     self.master.after(0, self.refresh_devices)
-                    self._stop_stream()
             time.sleep(3)
 
     # --- Exit ---
@@ -815,7 +694,6 @@ class App:
             c = self.api_log_text.get("1.0", "end-1c")
             threading.Thread(target=self._save_log_to_file_worker, args=(c,), daemon=True).start()
         except: pass
-        self._stop_stream()
         if self.tray_icon: self.tray_icon.stop()
         if self.api_process: self.api_process.terminate()
         if self.connected_device:
