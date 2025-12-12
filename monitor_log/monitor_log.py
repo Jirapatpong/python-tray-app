@@ -39,7 +39,7 @@ logging.basicConfig(
 running = True
 target_processes = []
 process_status = {}
-management_window = None # ตัวแปรเก็บสถานะหน้าต่าง GUI
+gui_open_flag = False # ตัวแปรเช็คว่าเปิดหน้าต่างค้างไว้อยู่ไหม
 
 # --- Config Management ---
 def load_config():
@@ -95,7 +95,7 @@ def get_recent_crash_log(proc_name):
 
 def monitor_loop(icon):
     global running, target_processes, process_status
-    logging.info("--- Monitor Started (GUI Fixed Version) ---")
+    logging.info("--- Monitor Started (Threaded GUI Version) ---")
     
     while running:
         current_targets = target_processes.copy()
@@ -127,25 +127,39 @@ def monitor_loop(icon):
         
         time.sleep(CHECK_INTERVAL)
 
-# --- GUI Management ---
-def open_management_window(icon, item):
-    global management_window
-
-    # เช็คก่อนว่ามีหน้าต่างเปิดอยู่ไหม ถ้ามีให้เด้งขึ้นมาเลย (ไม่สร้างใหม่)
-    if management_window is not None:
-        try:
-            management_window.lift()
-            management_window.focus_force()
-            return
-        except tk.TclError:
-            # ถ้าหน้าต่างเคยถูกทำลายไปแล้วแต่ตัวแปรยังค้าง ให้เคลียร์ทิ้งแล้วสร้างใหม่
-            management_window = None
+# --- GUI Management (Threaded) ---
+def run_gui_thread():
+    """ฟังก์ชันนี้จะรันใน Thread แยก เพื่อไม่ให้ System Tray ค้าง"""
+    global gui_open_flag
+    
+    # สร้าง GUI
+    root = tk.Tk()
+    root.title("Monitor Manager")
+    root.geometry("300x350")
+    root.attributes('-topmost', True) # ให้เด้งมาหน้าสุดเสมอ
 
     def on_closing():
-        global management_window
-        management_window.destroy()
-        management_window = None # รีเซ็ตค่าเพื่อให้เปิดใหม่ได้ครั้งหน้า
+        global gui_open_flag
+        gui_open_flag = False
+        root.destroy()
 
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    lbl = tk.Label(root, text="Monitored Processes (.exe):")
+    lbl.pack(pady=5)
+
+    listbox = tk.Listbox(root)
+    listbox.pack(fill=tk.BOTH, expand=True, padx=10)
+
+    for p in target_processes:
+        listbox.insert(tk.END, p)
+
+    frame_entry = tk.Frame(root)
+    frame_entry.pack(fill=tk.X, padx=10, pady=5)
+    
+    entry = tk.Entry(frame_entry)
+    entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
     def add_proc():
         new_proc = entry.get().strip()
         if new_proc and new_proc not in target_processes:
@@ -165,37 +179,22 @@ def open_management_window(icon, item):
         except Exception as e:
             pass
 
-    # Setup Window
-    management_window = tk.Tk()
-    management_window.title("Monitor Manager")
-    management_window.geometry("300x350")
-    management_window.attributes('-topmost', True)
-    
-    # กำหนดให้กด X แล้วเรียกฟังก์ชัน on_closing
-    management_window.protocol("WM_DELETE_WINDOW", on_closing)
-    
-    lbl = tk.Label(management_window, text="Monitored Processes (.exe):")
-    lbl.pack(pady=5)
-
-    listbox = tk.Listbox(management_window)
-    listbox.pack(fill=tk.BOTH, expand=True, padx=10)
-
-    for p in target_processes:
-        listbox.insert(tk.END, p)
-
-    frame_entry = tk.Frame(management_window)
-    frame_entry.pack(fill=tk.X, padx=10, pady=5)
-    
-    entry = tk.Entry(frame_entry)
-    entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    
     btn_add = tk.Button(frame_entry, text="Add", command=add_proc)
     btn_add.pack(side=tk.RIGHT, padx=5)
 
-    btn_del = tk.Button(management_window, text="Remove Selected", command=remove_proc, bg="#ffdddd")
+    btn_del = tk.Button(root, text="Remove Selected", command=remove_proc, bg="#ffdddd")
     btn_del.pack(fill=tk.X, padx=10, pady=10)
 
-    management_window.mainloop()
+    # รัน GUI Loop ใน Thread นี้
+    root.mainloop()
+
+def launch_gui(icon, item):
+    global gui_open_flag
+    # เช็คว่าเปิดอยู่แล้วหรือยัง ถ้าเปิดอยู่จะไม่สร้าง Thread ซ้ำ
+    if not gui_open_flag:
+        gui_open_flag = True
+        gui_thread = threading.Thread(target=run_gui_thread)
+        gui_thread.start()
 
 def open_log_file(icon, item):
     if os.path.exists(LOG_FILE_PATH):
@@ -205,13 +204,7 @@ def exit_action(icon, item):
     global running
     running = False
     icon.stop()
-    # ปิด GUI ด้วยถ้าเปิดค้างอยู่
-    if management_window:
-        try:
-            management_window.destroy()
-        except:
-            pass
-    os._exit(0) # Force kill process
+    os._exit(0) 
 
 # --- Main Execution ---
 if __name__ == "__main__":
@@ -221,7 +214,7 @@ if __name__ == "__main__":
     
     image = create_icon()
     menu = (
-        pystray.MenuItem('Manage Processes', open_management_window),
+        pystray.MenuItem('Manage Processes', launch_gui), # เรียกผ่าน wrapper thread
         pystray.MenuItem('Open Log File', open_log_file),
         pystray.MenuItem('Exit', exit_action)
     )
