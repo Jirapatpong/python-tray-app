@@ -24,13 +24,12 @@ jobs:
         pip install pyinstaller pystray Pillow psutil
 
     - name: Build EXE with PyInstaller
-      # แก้ไข Path ตรงนี้ให้ชี้ไปที่ไฟล์ในโฟลเดอร์ tools/monitor_log/
+      # แก้ไข Path ให้ตรงกับโครงสร้างใหม่: monitor_log/monitor_log.py
       run: |
-        pyinstaller -F -w --name "KioskMonitor" tools/monitor_log/monitor_log.py
+        pyinstaller -F -w --name "KioskMonitor" monitor_log/monitor_log.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: KioskMonitor-EXE
-        # PyInstaller จะสร้าง folder dist ไว้ที่ root เสมอ (ถ้าไม่สั่งแก้) ดังนั้น path นี้ยังเหมือนเดิม
         path: dist/KioskMonitor.exe
