@@ -9,7 +9,7 @@ import subprocess
 import sys
 import json
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 
 # ================= CONFIGURATION =================
 DEFAULT_PROCESSES = ["msedge.exe", "notepad.exe"]
@@ -39,6 +39,7 @@ logging.basicConfig(
 running = True
 target_processes = []
 process_status = {}
+management_window = None # ตัวแปรเก็บสถานะหน้าต่าง GUI
 
 # --- Config Management ---
 def load_config():
@@ -54,7 +55,6 @@ def load_config():
     else:
         target_processes = DEFAULT_PROCESSES
     
-    # Init status for new processes
     process_status = {proc: False for proc in target_processes}
 
 def save_config():
@@ -95,16 +95,14 @@ def get_recent_crash_log(proc_name):
 
 def monitor_loop(icon):
     global running, target_processes, process_status
-    logging.info("--- Monitor Started (GUI Version) ---")
+    logging.info("--- Monitor Started (GUI Fixed Version) ---")
     
     while running:
-        # Sync Process Status Dictionary (เผื่อมีการเพิ่ม/ลบ ระหว่างรัน)
-        current_targets = target_processes.copy() # Copy เพื่อป้องกัน Thread conflict
+        current_targets = target_processes.copy()
         for t in current_targets:
             if t not in process_status:
-                process_status[t] = False # เพิ่มตัวใหม่เข้ามา
+                process_status[t] = False
         
-        # Check Running Processes
         running_procs_now = []
         for proc in psutil.process_iter(['name']):
             try:
@@ -113,11 +111,8 @@ def monitor_loop(icon):
             except:
                 pass
 
-        # Update Logic
         for target in current_targets:
             is_now_running = target in running_procs_now
-            
-            # เช็คว่า Status เดิมมีอยู่ไหม (กัน Error กรณีเพิ่ง add มาใหม่)
             prev_status = process_status.get(target, False)
 
             if is_now_running != prev_status:
@@ -128,16 +123,29 @@ def monitor_loop(icon):
                     crash_details = get_recent_crash_log(target)
                     logging.warning(f"{msg}{crash_details}")
                     logging.info("-" * 50)
-                
                 process_status[target] = is_now_running
         
         time.sleep(CHECK_INTERVAL)
 
 # --- GUI Management ---
 def open_management_window(icon, item):
-    # สร้างหน้าต่าง Tkinter แบบแยก Thread หรือเป็น Modal
-    # เนื่องจากรันผ่าน Callback ของ Pystray เราต้องระวังเรื่อง Main Thread
-    
+    global management_window
+
+    # เช็คก่อนว่ามีหน้าต่างเปิดอยู่ไหม ถ้ามีให้เด้งขึ้นมาเลย (ไม่สร้างใหม่)
+    if management_window is not None:
+        try:
+            management_window.lift()
+            management_window.focus_force()
+            return
+        except tk.TclError:
+            # ถ้าหน้าต่างเคยถูกทำลายไปแล้วแต่ตัวแปรยังค้าง ให้เคลียร์ทิ้งแล้วสร้างใหม่
+            management_window = None
+
+    def on_closing():
+        global management_window
+        management_window.destroy()
+        management_window = None # รีเซ็ตค่าเพื่อให้เปิดใหม่ได้ครั้งหน้า
+
     def add_proc():
         new_proc = entry.get().strip()
         if new_proc and new_proc not in target_processes:
@@ -145,7 +153,6 @@ def open_management_window(icon, item):
             listbox.insert(tk.END, new_proc)
             entry.delete(0, tk.END)
             save_config()
-            logging.info(f"User added process to monitor: {new_proc}")
 
     def remove_proc():
         try:
@@ -155,28 +162,28 @@ def open_management_window(icon, item):
                 target_processes.remove(proc_to_remove)
                 listbox.delete(selection[0])
                 save_config()
-                logging.info(f"User removed process: {proc_to_remove}")
         except Exception as e:
             pass
 
     # Setup Window
-    root = tk.Tk()
-    root.title("Monitor Manager")
-    root.geometry("300x350")
-    # ทำให้หน้าต่างเด้งมาข้างหน้าสุด
-    root.attributes('-topmost', True) 
+    management_window = tk.Tk()
+    management_window.title("Monitor Manager")
+    management_window.geometry("300x350")
+    management_window.attributes('-topmost', True)
     
-    lbl = tk.Label(root, text="Monitored Processes (.exe):")
+    # กำหนดให้กด X แล้วเรียกฟังก์ชัน on_closing
+    management_window.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    lbl = tk.Label(management_window, text="Monitored Processes (.exe):")
     lbl.pack(pady=5)
 
-    listbox = tk.Listbox(root)
+    listbox = tk.Listbox(management_window)
     listbox.pack(fill=tk.BOTH, expand=True, padx=10)
 
-    # Load current list
     for p in target_processes:
         listbox.insert(tk.END, p)
 
-    frame_entry = tk.Frame(root)
+    frame_entry = tk.Frame(management_window)
     frame_entry.pack(fill=tk.X, padx=10, pady=5)
     
     entry = tk.Entry(frame_entry)
@@ -185,10 +192,10 @@ def open_management_window(icon, item):
     btn_add = tk.Button(frame_entry, text="Add", command=add_proc)
     btn_add.pack(side=tk.RIGHT, padx=5)
 
-    btn_del = tk.Button(root, text="Remove Selected", command=remove_proc, bg="#ffdddd")
+    btn_del = tk.Button(management_window, text="Remove Selected", command=remove_proc, bg="#ffdddd")
     btn_del.pack(fill=tk.X, padx=10, pady=10)
 
-    root.mainloop()
+    management_window.mainloop()
 
 def open_log_file(icon, item):
     if os.path.exists(LOG_FILE_PATH):
@@ -198,16 +205,23 @@ def exit_action(icon, item):
     global running
     running = False
     icon.stop()
+    # ปิด GUI ด้วยถ้าเปิดค้างอยู่
+    if management_window:
+        try:
+            management_window.destroy()
+        except:
+            pass
+    os._exit(0) # Force kill process
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    load_config() # โหลดค่าเก่าก่อนเริ่ม
+    load_config()
     
     monitor_thread = threading.Thread(target=monitor_loop, args=(None,))
     
     image = create_icon()
     menu = (
-        pystray.MenuItem('Manage Processes', open_management_window), # เมนูใหม่
+        pystray.MenuItem('Manage Processes', open_management_window),
         pystray.MenuItem('Open Log File', open_log_file),
         pystray.MenuItem('Exit', exit_action)
     )
